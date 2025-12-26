@@ -130,24 +130,29 @@ end
 -- ============================================================================
 
 ---Show a confirmation dialog
----@param opts table Dialog options
+---@param message string|string[] Message to display
+---@param on_confirm function Callback on confirmation
+---@param on_cancel function? Callback on cancel (optional)
 ---@return FloatWindow
-function M.confirm(opts)
-  return get_float().confirm(opts)
+function M.confirm(message, on_confirm, on_cancel)
+  return get_float().confirm(message, on_confirm, on_cancel)
 end
 
 ---Show an info dialog
----@param opts table Dialog options
+---@param message string|string[] Message to display
+---@param title string? Optional title
 ---@return FloatWindow
-function M.info(opts)
-  return get_float().info(opts)
+function M.info(message, title)
+  return get_float().info(message, title)
 end
 
 ---Show a select dialog
----@param opts table Dialog options
+---@param items string[] List of items
+---@param on_select function Callback with selected index and item
+---@param title string? Optional title
 ---@return FloatWindow
-function M.select(opts)
-  return get_float().select(opts)
+function M.select(items, on_select, title)
+  return get_float().select(items, on_select, title)
 end
 
 -- ============================================================================
@@ -155,10 +160,10 @@ end
 -- ============================================================================
 
 ---Create a multi-panel floating window layout
----@param opts table Multi-panel options
----@return table Multi-panel instance
-function M.multipanel(opts)
-  return get_float().multipanel(opts)
+---@param config MultiPanelConfig Multi-panel configuration
+---@return MultiPanelState? state State object (nil if creation failed)
+function M.create_multi_panel(config)
+  return get_float().create_multi_panel(config)
 end
 
 -- ============================================================================
@@ -184,9 +189,8 @@ function M.demo()
   builder:blank()
   builder:muted("Press 'q' or <Esc> to close")
 
-  local lines = builder:build_lines()
-
-  float.create(lines, {
+  -- Use create_styled for proper highlight application
+  float.create_styled(builder, {
     title = " nvim-float ",
     title_pos = "center",
     border = "rounded",
