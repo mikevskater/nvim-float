@@ -1377,12 +1377,12 @@ local BORDER_CHARS = {
     cross = "+",
   },
   ascii = {
-    top_left = "+", top_right = "+",
-    bottom_left = "+", bottom_right = "+",
-    horizontal = "-", vertical = "|",
-    t_down = "+", t_up = "+",
-    t_right = "+", t_left = "+",
-    cross = "+",
+    top_left = "╭", top_right = "╮",
+    bottom_left = "╰", bottom_right = "╯",
+    horizontal = "─", vertical = "│",
+    t_down = "┬", t_up = "┴",
+    t_right = "┤", t_left = "├",
+    cross = "┼",
   },
 }
 
