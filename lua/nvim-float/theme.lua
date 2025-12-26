@@ -72,21 +72,24 @@ local default_highlights = {
   NvimFloatOperator = { fg = "#D4D4D4" },
   NvimFloatFunction = { fg = "#DCDCAA" },
   NvimFloatType = { fg = "#4EC9B0" },
-
-  -- Result tables
-  NvimFloatTableHeader = { fg = "#9CDCFE", bold = true },
-  NvimFloatTableBorder = { fg = "#4A4A4A" },
-  NvimFloatTableRow = { link = "Normal" },
-  NvimFloatTableRowAlt = { bg = "#252525" },
-  NvimFloatTableNull = { fg = "#6A6A6A", italic = true },
-  NvimFloatTableMessage = { fg = "#6A9955", italic = true },
-  NvimFloatTableString = { link = "NvimFloatString" },
-  NvimFloatTableNumber = { link = "NvimFloatNumber" },
-  NvimFloatTableDate = { fg = "#D7BA7D" },
-  NvimFloatTableBool = { fg = "#569CD6" },
-  NvimFloatTableBinary = { fg = "#808080" },
-  NvimFloatTableGuid = { fg = "#CE9178" },
 }
+
+---Custom highlight groups registered by plugins
+---@type table<string, table>
+local custom_highlights = {}
+
+---Register additional highlight groups
+---Allows plugins to add their own highlight groups
+---@param highlights table<string, table> Map of highlight group name -> definition
+function M.register_highlights(highlights)
+  for name, def in pairs(highlights) do
+    custom_highlights[name] = def
+  end
+  -- Apply immediately if already setup
+  for name, def in pairs(highlights) do
+    vim.api.nvim_set_hl(0, name, def)
+  end
+end
 
 ---Setup highlight groups
 ---@param opts NvimFloatThemeConfig? Theme configuration
@@ -103,10 +106,21 @@ function M.setup(opts)
       vim.api.nvim_set_hl(0, name, def)
     end
   end
+
+  -- Apply custom highlights registered by plugins
+  for name, def in pairs(custom_highlights) do
+    local user_def = opts.override and opts.override[name]
+    if user_def then
+      vim.api.nvim_set_hl(0, name, user_def)
+    else
+      vim.api.nvim_set_hl(0, name, def)
+    end
+  end
 end
 
 ---Get the highlight group name for a semantic style
 ---This maps user-friendly style names to actual highlight groups
+---Note: ContentBuilder.register_styles() is the preferred way to add custom styles
 ---@param style string Semantic style name
 ---@return string? hl_group Highlight group name or nil
 function M.get_hl_group(style)
@@ -155,18 +169,6 @@ function M.get_hl_group(style)
     dropdown = "NvimFloatDropdown",
     dropdown_active = "NvimFloatInputActive",
     dropdown_arrow = "NvimFloatHint",
-
-    -- Result table styles
-    result_header = "NvimFloatTableHeader",
-    result_border = "NvimFloatTableBorder",
-    result_null = "NvimFloatTableNull",
-    result_message = "NvimFloatTableMessage",
-    result_string = "NvimFloatTableString",
-    result_number = "NvimFloatTableNumber",
-    result_date = "NvimFloatTableDate",
-    result_bool = "NvimFloatTableBool",
-    result_binary = "NvimFloatTableBinary",
-    result_guid = "NvimFloatTableGuid",
 
     -- Special
     normal = nil,

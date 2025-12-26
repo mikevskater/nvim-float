@@ -84,6 +84,25 @@ function M.setup(opts)
 end
 
 -- ============================================================================
+-- Plugin Extensibility API
+-- ============================================================================
+
+---Register additional style mappings for ContentBuilder
+---Allows plugins to add their own semantic styles that map to highlight groups
+---@param styles table<string, string> Map of style name -> highlight group name
+---@param override boolean? If true, allows overriding existing styles (default: false)
+function M.register_styles(styles, override)
+  get_content_builder().register_styles(styles, override)
+end
+
+---Register additional highlight groups
+---Allows plugins to add their own highlight groups
+---@param highlights table<string, table> Map of highlight group name -> definition
+function M.register_highlights(highlights)
+  get_theme().register_highlights(highlights)
+end
+
+-- ============================================================================
 -- Float Window API (delegated to float module)
 -- ============================================================================
 

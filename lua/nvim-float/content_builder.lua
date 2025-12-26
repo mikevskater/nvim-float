@@ -8,6 +8,7 @@ ContentBuilder.__index = ContentBuilder
 
 ---Semantic style mappings to nvim-float highlight groups
 ---These map user-friendly style names to actual theme groups
+---Plugins can register additional styles via ContentBuilder.register_styles()
 local STYLE_MAPPINGS = {
   -- Headers and titles
   header = "NvimFloatHeader",
@@ -54,22 +55,28 @@ local STYLE_MAPPINGS = {
   dropdown_active = "NvimFloatInputActive",
   dropdown_arrow = "NvimFloatHint",
 
-  -- Result buffer styles
-  result_header = "NvimFloatTableHeader",
-  result_border = "NvimFloatTableBorder",
-  result_null = "NvimFloatTableNull",
-  result_message = "NvimFloatTableMessage",
-  result_string = "NvimFloatTableString",
-  result_number = "NvimFloatTableNumber",
-  result_date = "NvimFloatTableDate",
-  result_bool = "NvimFloatTableBool",
-  result_binary = "NvimFloatTableBinary",
-  result_guid = "NvimFloatTableGuid",
-
   -- Special
   normal = nil,
   none = nil,
 }
+
+---Register additional style mappings
+---Allows plugins to add their own semantic styles that map to highlight groups
+---@param styles table<string, string> Map of style name -> highlight group name
+---@param override boolean? If true, allows overriding existing styles (default: false)
+function ContentBuilder.register_styles(styles, override)
+  for style_name, hl_group in pairs(styles) do
+    if override or STYLE_MAPPINGS[style_name] == nil then
+      STYLE_MAPPINGS[style_name] = hl_group
+    end
+  end
+end
+
+---Get all registered style mappings
+---@return table<string, string> Copy of current style mappings
+function ContentBuilder.get_style_mappings()
+  return vim.tbl_extend("force", {}, STYLE_MAPPINGS)
+end
 
 ---@class ContentLine
 ---@field text string The line text
