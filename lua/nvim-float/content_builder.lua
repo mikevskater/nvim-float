@@ -1467,7 +1467,7 @@ end
 ---@return ContentBuilder self
 function ContentBuilder:result_separator(columns, border_style)
   local chars = ContentBuilder.get_border_chars(border_style)
-  local parts = { chars.t_right }
+  local parts = { chars.t_left }
 
   for i, col in ipairs(columns) do
     table.insert(parts, string.rep(chars.horizontal, col.width + 2))
@@ -1475,7 +1475,7 @@ function ContentBuilder:result_separator(columns, border_style)
       table.insert(parts, chars.cross)
     end
   end
-  table.insert(parts, chars.t_left)
+  table.insert(parts, chars.t_right)
 
   local text = table.concat(parts, "")
   local line = {
@@ -1715,7 +1715,7 @@ end
 ---@return ContentBuilder self
 function ContentBuilder:result_row_separator(columns, border_style)
   local chars = ContentBuilder.get_border_chars(border_style)
-  local parts = { chars.t_right }
+  local parts = { chars.t_left }
 
   for i, col in ipairs(columns) do
     table.insert(parts, string.rep(chars.horizontal, col.width + 2))
@@ -1723,7 +1723,7 @@ function ContentBuilder:result_row_separator(columns, border_style)
       table.insert(parts, chars.cross)
     end
   end
-  table.insert(parts, chars.t_left)
+  table.insert(parts, chars.t_right)
 
   local text = table.concat(parts, "")
   local line = {
@@ -1909,7 +1909,7 @@ end
 ---@return ContentBuilder self
 function ContentBuilder:result_separator_with_rownum(columns, border_style, row_num_width)
   local chars = ContentBuilder.get_border_chars(border_style)
-  local parts = { chars.t_right }
+  local parts = { chars.t_left }
 
   -- Row number column
   if row_num_width then
@@ -1924,7 +1924,7 @@ function ContentBuilder:result_separator_with_rownum(columns, border_style, row_
       table.insert(parts, chars.cross)
     end
   end
-  table.insert(parts, chars.t_left)
+  table.insert(parts, chars.t_right)
 
   local text = table.concat(parts, "")
   local line = {
@@ -1975,7 +1975,7 @@ end
 ---@return string separator The separator string
 function ContentBuilder.build_row_separator_with_rownum(columns, border_style, row_num_width)
   local chars = ContentBuilder.get_border_chars(border_style)
-  local parts = { chars.t_right }
+  local parts = { chars.t_left }
 
   -- Row number column
   if row_num_width then
@@ -1990,7 +1990,7 @@ function ContentBuilder.build_row_separator_with_rownum(columns, border_style, r
       table.insert(parts, chars.cross)
     end
   end
-  table.insert(parts, chars.t_left)
+  table.insert(parts, chars.t_right)
 
   return table.concat(parts, "")
 end
