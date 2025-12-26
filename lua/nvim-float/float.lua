@@ -772,6 +772,24 @@ function FloatWindow:set_cursor(row, col)
   end
 end
 
+---Update window title
+---@param title string|table New title (string or { text, pos } table)
+function FloatWindow:update_title(title)
+  if not self:is_valid() then return end
+  local current_config = vim.api.nvim_win_get_config(self.winid)
+  current_config.title = title
+  vim.api.nvim_win_set_config(self.winid, current_config)
+end
+
+---Update window footer
+---@param footer string|table New footer (string or { text, pos } table)
+function FloatWindow:update_footer(footer)
+  if not self:is_valid() then return end
+  local current_config = vim.api.nvim_win_get_config(self.winid)
+  current_config.footer = footer
+  vim.api.nvim_win_set_config(self.winid, current_config)
+end
+
 -- ============================================================================
 -- Z-Index / Panel Ordering Methods
 -- ============================================================================

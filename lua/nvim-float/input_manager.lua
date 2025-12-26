@@ -779,6 +779,11 @@ function InputManager:_highlight_input(key, active)
   local input = self.inputs[key]
   if not input then return end
 
+  -- Check if buffer is still valid
+  if not self.bufnr or not vim.api.nvim_buf_is_valid(self.bufnr) then
+    return
+  end
+
   -- Clear existing highlights first
   vim.api.nvim_buf_clear_namespace(self.bufnr, self._namespace, input.line - 1, input.line)
 
@@ -801,6 +806,11 @@ end
 ---Highlight the current input (for Tab navigation in normal mode)
 ---@param current_key string Key of currently focused input
 function InputManager:_highlight_current_input(current_key)
+  -- Check if buffer is still valid
+  if not self.bufnr or not vim.api.nvim_buf_is_valid(self.bufnr) then
+    return
+  end
+
   -- Clear all and reapply with current highlighted
   vim.api.nvim_buf_clear_namespace(self.bufnr, self._namespace, 0, -1)
 
@@ -811,6 +821,11 @@ end
 
 ---Clear all input highlights
 function InputManager:_clear_input_highlights()
+  -- Check if buffer is still valid
+  if not self.bufnr or not vim.api.nvim_buf_is_valid(self.bufnr) then
+    return
+  end
+
   vim.api.nvim_buf_clear_namespace(self.bufnr, self._namespace, 0, -1)
 
   -- Reapply inactive highlights to all inputs
@@ -1180,6 +1195,11 @@ end
 ---Highlight a field (input, dropdown, or multi-dropdown)
 ---@param current_key string Key of currently focused field
 function InputManager:_highlight_current_field(current_key)
+  -- Check if buffer is still valid (may have been replaced by callback)
+  if not self.bufnr or not vim.api.nvim_buf_is_valid(self.bufnr) then
+    return
+  end
+
   -- Clear all and reapply with current highlighted
   vim.api.nvim_buf_clear_namespace(self.bufnr, self._namespace, 0, -1)
 
@@ -1206,6 +1226,11 @@ end
 function InputManager:_highlight_dropdown_base(dropdown_type, key, active)
   local field = dropdown_type == "dropdown" and self.dropdowns[key] or self.multi_dropdowns[key]
   if not field then return end
+
+  -- Check if buffer is still valid
+  if not self.bufnr or not vim.api.nvim_buf_is_valid(self.bufnr) then
+    return
+  end
 
   -- Determine highlight group based on state
   local hl_group
@@ -1674,6 +1699,11 @@ end
 function InputManager:_update_dropdown_display_base(dropdown_type, key, display_text, is_placeholder, arrow)
   local field = dropdown_type == "dropdown" and self.dropdowns[key] or self.multi_dropdowns[key]
   if not field then return end
+
+  -- Check if buffer is still valid (may have been replaced by callback)
+  if not self.bufnr or not vim.api.nvim_buf_is_valid(self.bufnr) then
+    return
+  end
 
   local text_width = field.text_width or 18
   local padded_text = self:_pad_or_truncate_text(display_text, text_width)
