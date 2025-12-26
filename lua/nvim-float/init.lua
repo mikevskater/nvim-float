@@ -8,10 +8,12 @@
 --- - Multi-panel layouts
 --- - Scrollbars
 --- - Dialogs (confirm, info, select)
+--- - Form inputs with validation
+--- - Interactive list pickers
 
 local M = {}
 
-M.version = "0.4.0"
+M.version = "0.5.0"
 
 -- Lazy-loaded submodules
 local _float = nil
@@ -19,6 +21,8 @@ local _content_builder = nil
 local _input_manager = nil
 local _config = nil
 local _theme = nil
+local _form = nil
+local _interactive = nil
 
 ---Get the config module (lazy-loaded)
 ---@return table
@@ -63,6 +67,24 @@ local function get_input_manager()
     _input_manager = require("nvim-float.input_manager")
   end
   return _input_manager
+end
+
+---Get the form module (lazy-loaded)
+---@return UiFloatForm
+local function get_form()
+  if not _form then
+    _form = require("nvim-float.float.form")
+  end
+  return _form
+end
+
+---Get the interactive module (lazy-loaded)
+---@return UiFloatInteractive
+local function get_interactive()
+  if not _interactive then
+    _interactive = require("nvim-float.float.interactive")
+  end
+  return _interactive
 end
 
 -- ============================================================================
@@ -188,6 +210,40 @@ end
 ---@return MultiPanelState? state State object (nil if creation failed)
 function M.create_multi_panel(config)
   return get_float().create_multi_panel(config)
+end
+
+-- ============================================================================
+-- Form API
+-- ============================================================================
+
+---Create a form with input fields, checkboxes, and validation
+---@param config FormConfig Form configuration
+---@return FormState? state Form state object (nil if creation failed)
+function M.create_form(config)
+  return get_form().create(config)
+end
+
+---Get the Form module directly (for advanced usage)
+---@return UiFloatForm
+function M.Form()
+  return get_form()
+end
+
+-- ============================================================================
+-- Interactive Picker API
+-- ============================================================================
+
+---Create an interactive list picker with navigation
+---@param config FloatInteractiveConfig Picker configuration
+---@return FloatInteractiveState? state Picker state object (nil if creation failed)
+function M.create_picker(config)
+  return get_interactive().create(config)
+end
+
+---Get the Interactive module directly (for advanced usage)
+---@return UiFloatInteractive
+function M.Interactive()
+  return get_interactive()
 end
 
 -- ============================================================================
