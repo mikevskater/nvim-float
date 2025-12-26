@@ -137,11 +137,16 @@ end
 -- ============================================================================
 
 ---Create a new InputManager instance
----@param float_win FloatWindow The floating window to manage inputs for
----@param content_builder ContentBuilder The content builder with input definitions
+---@param config InputManagerConfig Configuration for the input manager
 ---@return InputManager
-function M.input_manager(float_win, content_builder)
-  return get_input_manager().new(float_win, content_builder)
+function M.input_manager(config)
+  return get_input_manager().new(config)
+end
+
+---Get the InputManager class directly (for advanced usage)
+---@return table InputManager class
+function M.InputManager()
+  return get_input_manager()
 end
 
 -- ============================================================================
