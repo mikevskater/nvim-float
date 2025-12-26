@@ -6,10 +6,10 @@ local Scrollbar = {}
 
 ---Scrollbar characters
 local CHARS = {
-  UP_ARROW = "^",
-  DOWN_ARROW = "v",
-  THUMB = "#",
-  TRACK = "|",
+  UP_ARROW = "▲",
+  DOWN_ARROW = "▼",
+  THUMB = "█",
+  TRACK = "░",
 }
 
 -- Highlight namespace for scrollbar
