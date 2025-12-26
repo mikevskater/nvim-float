@@ -11,7 +11,7 @@
 
 local M = {}
 
-M.version = "0.1.0"
+M.version = "0.4.0"
 
 -- Lazy-loaded submodules
 local _float = nil
