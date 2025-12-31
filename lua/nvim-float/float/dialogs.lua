@@ -19,6 +19,7 @@ function Dialogs.confirm(UiFloat, message, on_confirm, on_cancel)
     title = "Confirm",
     border = "rounded",
     width = 50,
+    zindex = UiFloat.ZINDEX and UiFloat.ZINDEX.MODAL or 150,
     keymaps = {
       y = function()
         if on_confirm then on_confirm() end
@@ -44,6 +45,7 @@ function Dialogs.info(UiFloat, message, title)
     title = title or "Info",
     border = "rounded",
     width = 50,
+    zindex = UiFloat.ZINDEX and UiFloat.ZINDEX.MODAL or 150,
   })
 end
 
@@ -64,6 +66,7 @@ function Dialogs.select(UiFloat, items, on_select, title)
     border = "rounded",
     max_height = 20,
     cursorline = true,
+    zindex = UiFloat.ZINDEX and UiFloat.ZINDEX.MODAL or 150,
     keymaps = {
       ['<CR>'] = function()
         local win = vim.api.nvim_get_current_win()
