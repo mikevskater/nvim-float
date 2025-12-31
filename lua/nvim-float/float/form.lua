@@ -20,6 +20,7 @@ local ContentBuilder = require('nvim-float.content_builder')
 ---@field fields FormField[] Array of form fields
 ---@field width number? Form width (default: 60)
 ---@field height number? Form height (auto-calculated if not provided)
+---@field zindex number? Z-index for window stacking (default: BASE)
 ---@field on_submit fun(values: table) Called when form is submitted
 ---@field on_cancel fun()? Called when form is cancelled
 ---@field header string|string[]? Header text or lines
@@ -85,6 +86,7 @@ function UiFloatForm.create(config)
     keymaps = keymaps,
     content_builder = cb,
     enable_inputs = true,
+    zindex = config.zindex,
   })
 
   current_state = state
