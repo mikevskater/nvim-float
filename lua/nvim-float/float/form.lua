@@ -272,11 +272,14 @@ function UiFloatForm.submit()
     end
   end
 
+  -- Save callback before closing (close sets current_state to nil)
+  local on_submit = current_state.config.on_submit
+
   -- Close form
   UiFloatForm.close()
 
   -- Call submit callback
-  current_state.config.on_submit(values)
+  on_submit(values)
 end
 
 ---Cancel the form
