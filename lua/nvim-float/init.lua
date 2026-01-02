@@ -13,7 +13,7 @@
 
 local M = {}
 
-M.version = "1.0.0"
+M.version = "1.0.1"
 
 -- Track if setup has been called
 local _setup_complete = false
