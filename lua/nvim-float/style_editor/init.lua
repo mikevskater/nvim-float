@@ -7,7 +7,7 @@ local Data = require("nvim-float.style_editor.data")
 local Render = require("nvim-float.style_editor.render")
 local Preview = require("nvim-float.style_editor.preview")
 local Persistence = require("nvim-float.style_editor.persistence")
-local UiFloat = require("nvim-float.float")
+local UiFloat = require("nvim-float.window")
 
 ---@class StyleEditorState
 ---@field original_highlights table<string, table> Backup of original highlight definitions

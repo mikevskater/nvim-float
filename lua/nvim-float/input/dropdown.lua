@@ -112,7 +112,7 @@ end
 ---@param im InputManager The InputManager instance
 ---@return ContentBuilder cb
 local function build_content(im)
-  local ContentBuilder = require('nvim-float.content_builder')
+  local ContentBuilder = require('nvim-float.content')
   local cb = ContentBuilder.new()
 
   local key = im._dropdown_key
@@ -208,7 +208,7 @@ function M.open(im, key)
   local lines = cb:build_lines()
 
   -- Create float
-  local UiFloat = require('nvim-float.float')
+  local UiFloat = require('nvim-float.window')
   im._dropdown_float = UiFloat.create(lines, {
     centered = false,
     relative = "editor",

@@ -3,7 +3,7 @@
 ---Provides state management, navigation, and common keymaps for interactive list pickers
 local UiFloatInteractive = {}
 
-local UiFloat = require('nvim-float.float')
+local UiFloat = require('nvim-float.window')
 
 -- Namespace for highlights
 local HIGHLIGHT_NS = vim.api.nvim_create_namespace("nvim_float_interactive")

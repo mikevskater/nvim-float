@@ -11,7 +11,13 @@ local Dialogs = {}
 ---@param on_cancel function? Callback on cancel (optional)
 ---@return FloatWindow
 function Dialogs.confirm(UiFloat, message, on_confirm, on_cancel)
-  local lines = type(message) == "table" and message or { message }
+  local lines
+  if type(message) == "table" then
+    lines = message
+  else
+    -- Split string on newlines
+    lines = vim.split(message, "\n", { plain = true })
+  end
   table.insert(lines, "")
   table.insert(lines, "Press 'y' to confirm, 'n' to cancel")
 
@@ -39,7 +45,13 @@ end
 ---@param title string? Optional title
 ---@return FloatWindow
 function Dialogs.info(UiFloat, message, title)
-  local lines = type(message) == "table" and message or { message }
+  local lines
+  if type(message) == "table" then
+    lines = message
+  else
+    -- Split string on newlines
+    lines = vim.split(message, "\n", { plain = true })
+  end
 
   return UiFloat.create(lines, {
     title = title or "Info",
@@ -135,7 +147,7 @@ function Dialogs.show_controls_popup(UiFloat, controls)
     return
   end
 
-  local ContentBuilder = require('nvim-float.content_builder')
+  local ContentBuilder = require('nvim-float.content')
   local cb = ContentBuilder.new()
 
   cb:header("Controls")
@@ -180,7 +192,7 @@ end
 ---Get the ContentBuilder module for convenience
 ---@return ContentBuilder
 function Dialogs.ContentBuilder()
-  return require('nvim-float.content_builder')
+  return require('nvim-float.content')
 end
 
 return Dialogs

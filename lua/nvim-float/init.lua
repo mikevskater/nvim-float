@@ -13,7 +13,7 @@
 
 local M = {}
 
-M.version = "1.0.7"
+M.version = "1.0.8"
 
 -- Track if setup has been called
 local _setup_complete = false
@@ -50,7 +50,7 @@ end
 ---@return UiFloat
 local function get_float()
   if not _float then
-    _float = require("nvim-float.float")
+    _float = require("nvim-float.window")
   end
   return _float
 end
@@ -59,7 +59,7 @@ end
 ---@return table
 local function get_content_builder()
   if not _content_builder then
-    _content_builder = require("nvim-float.content_builder")
+    _content_builder = require("nvim-float.content")
   end
   return _content_builder
 end
@@ -68,7 +68,7 @@ end
 ---@return table
 local function get_input_manager()
   if not _input_manager then
-    _input_manager = require("nvim-float.input_manager")
+    _input_manager = require("nvim-float.input")
   end
   return _input_manager
 end

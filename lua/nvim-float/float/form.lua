@@ -4,8 +4,8 @@
 ---Uses inline input fields instead of vim.ui.input prompts
 local UiFloatForm = {}
 
-local UiFloat = require('nvim-float.float')
-local ContentBuilder = require('nvim-float.content_builder')
+local UiFloat = require('nvim-float.window')
+local ContentBuilder = require('nvim-float.content')
 
 ---@class FormField
 ---@field name string Field name/identifier

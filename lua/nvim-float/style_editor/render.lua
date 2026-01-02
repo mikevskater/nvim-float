@@ -4,7 +4,7 @@
 local M = {}
 
 local Data = require("nvim-float.style_editor.data")
-local ContentBuilder = require("nvim-float.content_builder")
+local ContentBuilder = require("nvim-float.content")
 
 ---Namespace for swatch extmarks
 local swatch_ns = vim.api.nvim_create_namespace("nvim_float_style_editor_swatch")

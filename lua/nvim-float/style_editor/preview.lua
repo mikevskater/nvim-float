@@ -7,7 +7,7 @@ local M = {}
 ---@return string[] lines
 ---@return table[] highlights
 function M.build()
-  local ContentBuilder = require("nvim-float.content_builder")
+  local ContentBuilder = require("nvim-float.content")
   local cb = ContentBuilder.new()
 
   -- Window Elements Section

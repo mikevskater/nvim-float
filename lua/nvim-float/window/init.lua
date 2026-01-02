@@ -56,7 +56,7 @@ function UiFloat.create(lines, config)
   -- Handle content_builder in config
   local content_builder = config.content_builder
   if content_builder == true then
-    local ContentBuilder = require('nvim-float.content_builder')
+    local ContentBuilder = require('nvim-float.content')
     content_builder = ContentBuilder.new()
     config.content_builder = content_builder
     lines = {""}
@@ -574,7 +574,7 @@ end
 -- ============================================================================
 
 function FloatWindow:_setup_input_manager(content_builder)
-  local InputManager = require('nvim-float.input_manager')
+  local InputManager = require('nvim-float.input')
 
   local inputs = content_builder:get_inputs()
   local input_order = content_builder:get_input_order()
