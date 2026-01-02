@@ -13,7 +13,10 @@
 
 local M = {}
 
-M.version = "0.9.0"
+M.version = "1.0.0"
+
+-- Track if setup has been called
+local _setup_complete = false
 
 -- Lazy-loaded submodules
 local _float = nil
@@ -110,9 +113,26 @@ function M.setup(opts)
   local config = get_config()
   config.setup(opts)
 
-  -- Setup highlight groups
+  -- Setup highlight groups with user theme options
   local theme = get_theme()
   theme.setup(opts.theme or {})
+
+  -- Mark setup as complete
+  _setup_complete = true
+end
+
+---Check if setup has been called
+---@return boolean
+function M.is_setup()
+  return _setup_complete
+end
+
+---Ensure setup has been called, auto-setup with defaults if not
+---Call this before using features that require theme initialization
+function M.ensure_setup()
+  if not _setup_complete then
+    M.setup({})
+  end
 end
 
 -- ============================================================================
@@ -262,6 +282,9 @@ end
 
 ---Show a demo window to test the plugin
 function M.demo()
+  -- Ensure theme highlights are set up
+  M.ensure_setup()
+
   local float = get_float()
   local ContentBuilder = get_content_builder()
 

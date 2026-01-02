@@ -10,7 +10,6 @@ local Persistence = require("nvim-float.style_editor.persistence")
 local UiFloat = require("nvim-float.float")
 
 ---@class StyleEditorState
----@field selected_color_idx number Currently selected color index (1-indexed)
 ---@field original_highlights table<string, table> Backup of original highlight definitions
 ---@field modified_highlights table<string, table> Modified highlights (for saving)
 ---@field is_dirty boolean Whether any changes have been made
@@ -29,7 +28,6 @@ local state = nil
 ---@return StyleEditorState
 local function create_state()
   local st = {
-    selected_color_idx = 1,
     original_highlights = {},
     modified_highlights = {},
     is_dirty = false,
@@ -64,48 +62,26 @@ local function refresh_ui()
     if colors_buf then
       Render.apply_swatch_highlights(colors_buf, state)
     end
+
+    -- Re-associate ContentBuilder for element tracking after re-render
+    local cb = Render.get_content_builder()
+    if cb then
+      multi_panel:set_panel_content_builder("colors", cb)
+    end
   end)
-end
-
--- ============================================================================
--- Navigation
--- ============================================================================
-
----Navigate colors list
----@param direction number 1 for down, -1 for up
-local function navigate_colors(direction)
-  if not state or not multi_panel then return end
-
-  state.selected_color_idx = state.selected_color_idx + direction
-
-  local total = #Data.HIGHLIGHT_DEFINITIONS
-  if state.selected_color_idx < 1 then
-    state.selected_color_idx = total
-  elseif state.selected_color_idx > total then
-    state.selected_color_idx = 1
-  end
-
-  -- Just move cursor - no need to re-render the panel
-  local cursor_line = Render.get_color_cursor_line(state.selected_color_idx)
-  multi_panel:set_cursor("colors", cursor_line, 0)
-end
-
----Sync cursor to current selection (called when focusing colors panel)
-local function sync_cursor_to_selection()
-  if not state or not multi_panel then return end
-  local cursor_line = Render.get_color_cursor_line(state.selected_color_idx)
-  multi_panel:set_cursor("colors", cursor_line, 0)
 end
 
 -- ============================================================================
 -- Color Editing
 -- ============================================================================
 
----Edit the currently selected color using the color picker
-local function edit_color()
+---Edit a color using the color picker (called from element on_interact)
+---@param element TrackedElement The element being interacted with
+local function edit_color_element(element)
   if not state or not multi_panel then return end
+  if not element or not element.data then return end
 
-  local def = Data.HIGHLIGHT_DEFINITIONS[state.selected_color_idx]
+  local def = element.data.def
   if not def then return end
 
   -- Try to load colorpicker
@@ -115,8 +91,8 @@ local function edit_color()
     return
   end
 
-  -- Get current highlight values
-  local current_hl = vim.api.nvim_get_hl(0, { name = def.key })
+  -- Get current highlight values (resolve links to get actual colors)
+  local current_hl = vim.api.nvim_get_hl(0, { name = def.key, link = false })
   local original_value = vim.deepcopy(current_hl)
 
   -- Working copies
@@ -151,8 +127,8 @@ local function edit_color()
     initial_target = "bg"
   end
 
-  -- Helper to apply working colors
-  local function apply_working_colors()
+  -- Helper to apply working colors and refresh UI (only called on confirm)
+  local function apply_and_refresh()
     if not state then return end
 
     local hl_def = {}
@@ -172,10 +148,10 @@ local function edit_color()
     refresh_ui()
   end
 
-  -- Build custom controls
+  -- Build custom controls (no live updates - only track values)
   local custom_controls = {}
 
-  -- Target selector (fg/bg)
+  -- Target selector (fg/bg) - just switches which color is being edited
   if #target_options > 1 then
     table.insert(custom_controls, {
       id = "target",
@@ -194,12 +170,12 @@ local function edit_color()
         local new_color = working_colors[new_target] or "#808080"
         local new_original = original_colors[new_target]
         colorpicker.set_color(new_color, new_original)
-        apply_working_colors()
+        -- No UI refresh here - just switching targets
       end,
     })
   end
 
-  -- Bold toggle
+  -- Bold toggle - just updates working copy
   table.insert(custom_controls, {
     id = "bold",
     type = "toggle",
@@ -208,11 +184,11 @@ local function edit_color()
     key = "b",
     on_change = function(new_val)
       working_colors.bold = new_val
-      apply_working_colors()
+      -- No UI refresh here - will apply on confirm
     end,
   })
 
-  -- Italic toggle
+  -- Italic toggle - just updates working copy
   table.insert(custom_controls, {
     id = "italic",
     type = "toggle",
@@ -221,17 +197,23 @@ local function edit_color()
     key = "i",
     on_change = function(new_val)
       working_colors.italic = new_val
-      apply_working_colors()
+      -- No UI refresh here - will apply on confirm
     end,
   })
+
+  -- Build title with optional note
+  local picker_title = def.name .. " (" .. def.key .. ")"
+  if def.note then
+    picker_title = picker_title .. " - " .. def.note
+  end
 
   -- Open color picker
   colorpicker.pick({
     color = working_colors[initial_target] or "#808080",
-    title = def.name .. " (" .. def.key .. ")",
+    title = picker_title,
     custom_controls = custom_controls,
 
-    -- Live preview as user navigates
+    -- NO live preview - just track values as user navigates
     on_change = function(result)
       if not state then return end
 
@@ -242,11 +224,10 @@ local function edit_color()
         working_colors.bold = result.custom.bold
         working_colors.italic = result.custom.italic
       end
-
-      apply_working_colors()
+      -- Don't refresh UI here - wait for confirm
     end,
 
-    -- User confirmed selection
+    -- User confirmed selection - NOW apply changes and refresh
     on_select = function(result)
       if not state then return end
 
@@ -258,22 +239,19 @@ local function edit_color()
         working_colors.italic = result.custom.italic
       end
 
-      apply_working_colors()
+      -- Apply colors and refresh UI only on confirm
+      apply_and_refresh()
 
-      if multi_panel then
-        multi_panel:update_panel_title("colors", " Highlight Groups * ")
-      end
+      vim.schedule(function()
+        if multi_panel then
+          multi_panel:update_panel_title("colors", " Highlight Groups * ")
+        end
+      end)
     end,
 
-    -- User cancelled - restore original
+    -- User cancelled - no changes needed (original values unchanged)
     on_cancel = function()
-      if not state then return end
-
-      vim.api.nvim_set_hl(0, def.key, original_value)
-      state.modified_highlights[def.key] = nil
-      state.is_dirty = vim.tbl_count(state.modified_highlights) > 0
-
-      refresh_ui()
+      -- Nothing to restore - we didn't apply any changes during preview
     end,
   })
 end
@@ -282,7 +260,11 @@ end
 local function reset_to_default()
   if not state or not multi_panel then return end
 
-  local def = Data.HIGHLIGHT_DEFINITIONS[state.selected_color_idx]
+  -- Get the element at cursor to find which color to reset
+  local element = multi_panel:get_element_at_cursor()
+  if not element or not element.data then return end
+
+  local def = element.data.def
   if not def then return end
 
   -- Get default from theme module
@@ -391,6 +373,10 @@ function M.show()
     M.close()
   end
 
+  -- Ensure nvim-float is set up (theme highlights initialized)
+  local nf = require("nvim-float")
+  nf.ensure_setup()
+
   -- Create state
   state = create_state()
 
@@ -406,7 +392,7 @@ function M.show()
           filetype = "nvim-float-style-editor",
           cursorline = true,
           on_render = function()
-            return Render.render_colors(state)
+            return Render.render_colors(state, edit_color_element)
           end,
           on_create = function(bufnr, winid)
             -- Create bg-only CursorLine so swatches show through
@@ -429,8 +415,6 @@ function M.show()
               local dirty_marker = state and state.is_dirty and " *" or ""
               multi_panel:update_panel_title("colors", " Highlight Groups" .. dirty_marker .. " * ")
               multi_panel:update_panel_title("preview", " Preview ")
-              -- Sync cursor to selection when focusing
-              sync_cursor_to_selection()
             end
           end,
         },
@@ -461,7 +445,6 @@ function M.show()
       {
         header = "Navigation",
         keys = {
-          { key = "j/k", desc = "Navigate up/down" },
           { key = "Tab", desc = "Switch panels" },
         },
       },
@@ -491,23 +474,28 @@ function M.show()
   -- Initial render of all panels
   multi_panel:render_all()
 
-  -- Apply swatch highlights after initial render
+  -- Apply swatch highlights and enable element tracking after initial render
   vim.schedule(function()
     if multi_panel then
       local colors_buf = multi_panel:get_panel_buffer("colors")
       if colors_buf then
         Render.apply_swatch_highlights(colors_buf, state)
       end
+
+      -- Associate ContentBuilder with panel for element tracking
+      local cb = Render.get_content_builder()
+      if cb then
+        multi_panel:set_panel_content_builder("colors", cb)
+      end
+
+      -- Enable element tracking for hover effects
+      multi_panel:enable_element_tracking("colors")
     end
   end)
 
-  -- Set up keymaps for colors panel
+  -- Set up keymaps for colors panel (normal vim movement handles navigation)
   multi_panel:set_panel_keymaps("colors", {
-    ["j"] = function() navigate_colors(1) end,
-    ["k"] = function() navigate_colors(-1) end,
-    ["<Down>"] = function() navigate_colors(1) end,
-    ["<Up>"] = function() navigate_colors(-1) end,
-    ["<CR>"] = edit_color,
+    ["<CR>"] = function() multi_panel:interact_at_cursor() end,
     ["r"] = reset_to_default,
     ["R"] = reset_all,
     ["s"] = save_changes,
@@ -524,10 +512,6 @@ function M.show()
     ["q"] = cancel,
     ["<Esc>"] = cancel,
   })
-
-  -- Position cursor on first color
-  local cursor_line = Render.get_color_cursor_line(1)
-  multi_panel:set_cursor("colors", cursor_line, 0)
 end
 
 return M

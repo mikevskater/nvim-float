@@ -13,6 +13,10 @@ local swatch_ns = vim.api.nvim_create_namespace("nvim_float_style_editor_swatch"
 local SWATCH_CHAR = "●"
 local SWATCH_BYTES = 3 -- UTF-8 bytes for ●
 
+---Stored ContentBuilder for element tracking
+---@type ContentBuilder?
+M._content_builder = nil
+
 ---Format a color value for display
 ---@param hl table Highlight definition from nvim_get_hl
 ---@return string
@@ -46,18 +50,20 @@ local function format_color_value(hl)
   return table.concat(parts, " ")
 end
 
----Render the colors panel content
+---Render the colors panel content using element tracking
+---Each highlight row is tracked as an element for cursor-based interaction
 ---@param state StyleEditorState
+---@param on_color_interact fun(element: TrackedElement)? Callback when color is interacted with
 ---@return string[] lines
 ---@return table[] highlights
-function M.render_colors(state)
+function M.render_colors(state, on_color_interact)
   local cb = ContentBuilder.new()
   local current_category = nil
 
   cb:blank()
 
   for i, def in ipairs(Data.HIGHLIGHT_DEFINITIONS) do
-    -- Category header
+    -- Category header (not tracked)
     if def.category ~= current_category then
       if current_category ~= nil then
         cb:blank()
@@ -67,35 +73,53 @@ function M.render_colors(state)
       current_category = def.category
     end
 
-    -- Get current highlight values
-    local hl = vim.api.nvim_get_hl(0, { name = def.key })
+    -- Get current highlight values (resolve links to get actual colors)
+    local hl = vim.api.nvim_get_hl(0, { name = def.key, link = false })
     local color_str = format_color_value(hl)
-    local is_selected = (i == state.selected_color_idx)
 
-    -- Build the line with selection indicator
-    local prefix = is_selected and " ▸ " or "   "
-    local name_padded = string.format("%-20s", def.name)
+    -- Build the line content
+    local prefix = "   "
+    -- Add asterisk for highlights with notes (like Window Base)
+    local name_display = def.note and (def.name .. "*") or def.name
+    local name_padded = string.format("%-20s", name_display)
 
-    if is_selected then
-      cb:spans({
-        { text = prefix, style = "emphasis" },
-        { text = name_padded, style = "strong" },
-        { text = SWATCH_CHAR }, -- Will be overwritten by extmark
-        { text = " " .. color_str, style = "value" },
-      })
-    else
-      cb:spans({
-        { text = prefix, style = "muted" },
-        { text = name_padded, style = "label" },
-        { text = SWATCH_CHAR }, -- Will be overwritten by extmark
-        { text = " " .. color_str, style = "muted" },
-      })
-    end
+    -- Track this row as an interactive element using spans with track
+    -- The first span carries the tracking info with row_based = true
+    cb:spans({
+      {
+        text = prefix,
+        style = "muted",
+        track = {
+          name = def.key,
+          type = "action",
+          row_based = true,
+          hover_style = "emphasis",
+          data = {
+            idx = i,
+            def = def,
+            hl_key = def.key,
+          },
+          on_interact = on_color_interact,
+        },
+      },
+      { text = name_padded, style = "label" },
+      { text = SWATCH_CHAR }, -- Will be overwritten by extmark
+      { text = " " .. color_str, style = "muted" },
+    })
   end
 
   cb:blank()
 
+  -- Store the ContentBuilder for element tracking access
+  M._content_builder = cb
+
   return cb:build_lines(), cb:build_highlights()
+end
+
+---Get the stored ContentBuilder (for element tracking integration)
+---@return ContentBuilder?
+function M.get_content_builder()
+  return M._content_builder
 end
 
 ---Calculate the cursor line for a given color index
@@ -152,26 +176,24 @@ function M.apply_swatch_highlights(bufnr, state)
       current_category = def.category
     end
 
-    -- Get current highlight colors
-    local hl = vim.api.nvim_get_hl(0, { name = def.key })
+    -- Get current highlight colors (resolve links to get actual colors)
+    local hl = vim.api.nvim_get_hl(0, { name = def.key, link = false })
 
     -- Create dynamic highlight group for this swatch
     local hl_name = "StyleEditorSwatch" .. i
     local hl_def = {}
 
+    -- Set both fg and bg if available
     if hl.fg then
       hl_def.fg = hl.fg
-    elseif hl.bg then
-      -- If only bg, show that as fg for the swatch
+    end
+    if hl.bg then
+      hl_def.bg = hl.bg
+    end
+
+    -- If only bg defined, use it as fg so the swatch bullet shows color
+    if not hl.fg and hl.bg then
       hl_def.fg = hl.bg
-    elseif hl.link then
-      -- Resolve linked highlight
-      local linked = vim.api.nvim_get_hl(0, { name = hl.link, link = false })
-      if linked.fg then
-        hl_def.fg = linked.fg
-      elseif linked.bg then
-        hl_def.fg = linked.bg
-      end
     end
 
     -- Only apply if we have a color to show
@@ -187,6 +209,7 @@ function M.apply_swatch_highlights(bufnr, state)
           pcall(vim.api.nvim_buf_set_extmark, bufnr, swatch_ns, line_idx, col_start, {
             end_col = col_start + SWATCH_BYTES,
             hl_group = hl_name,
+            priority = 300,  -- High priority to override base Normal highlight
           })
         end
       end

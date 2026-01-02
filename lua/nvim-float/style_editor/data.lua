@@ -9,12 +9,13 @@ local M = {}
 ---@field category string Category name
 ---@field has_bg boolean? Whether this group typically uses bg color
 ---@field has_fg boolean? Whether this group typically uses fg color (default true)
+---@field note string? Optional note/warning about this highlight
 
 ---All highlight groups organized by category
 ---@type HighlightDefinition[]
 M.HIGHLIGHT_DEFINITIONS = {
   -- Window
-  { key = "NvimFloatNormal", name = "Normal", category = "Window", has_bg = true },
+  { key = "NvimFloatNormal", name = "Window Base", category = "Window", has_bg = true, note = "Base for all unstyled text" },
   { key = "NvimFloatBorder", name = "Border", category = "Window" },
   { key = "NvimFloatTitle", name = "Title", category = "Window" },
   { key = "NvimFloatSelected", name = "Selected", category = "Window", has_bg = true },
