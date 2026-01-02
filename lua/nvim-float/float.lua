@@ -158,6 +158,10 @@ function UiFloat.create(lines, config)
     _content_builder = content_builder,
     _user_specified_width = user_specified_width,
     _user_specified_height = user_specified_height,
+    -- Element tracking state
+    _hovered_element = nil,       -- Currently hovered element name
+    _element_hover_ns = nil,      -- Namespace for hover highlights
+    _element_tracking_enabled = false,
   }, FloatWindow)
 
   -- Apply defaults
@@ -966,6 +970,228 @@ end
 function FloatWindow:has_elements()
   local registry = self:get_element_registry()
   return registry and not registry:is_empty() or false
+end
+
+---Enable element tracking (cursor-aware hover styles and focus/blur callbacks)
+---Call this after rendering content to enable hover effects
+function FloatWindow:enable_element_tracking()
+  if self._element_tracking_enabled then return end
+  if not self:is_valid() then return end
+
+  self._element_tracking_enabled = true
+  self._element_hover_ns = vim.api.nvim_create_namespace("nvim_float_element_hover")
+
+  -- Setup CursorMoved autocmd
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    group = self._augroup,
+    buffer = self.bufnr,
+    callback = function()
+      self:_on_element_cursor_moved()
+    end,
+  })
+
+  -- Trigger initial check
+  self:_on_element_cursor_moved()
+end
+
+---Disable element tracking
+function FloatWindow:disable_element_tracking()
+  if not self._element_tracking_enabled then return end
+
+  self._element_tracking_enabled = false
+
+  -- Clear hover highlights
+  if self._element_hover_ns and self.bufnr and vim.api.nvim_buf_is_valid(self.bufnr) then
+    vim.api.nvim_buf_clear_namespace(self.bufnr, self._element_hover_ns, 0, -1)
+  end
+
+  -- Blur current element if any
+  if self._hovered_element then
+    local registry = self:get_element_registry()
+    if registry then
+      local element = registry:get(self._hovered_element)
+      if element then
+        element:blur()
+      end
+    end
+    self._hovered_element = nil
+  end
+end
+
+---Handle cursor movement for element tracking
+---@private
+function FloatWindow:_on_element_cursor_moved()
+  if not self._element_tracking_enabled then return end
+  if not self:is_valid() then return end
+
+  local element = self:get_element_at_cursor()
+  local new_name = element and element.name or nil
+  local old_name = self._hovered_element
+
+  -- No change
+  if new_name == old_name then return end
+
+  local registry = self:get_element_registry()
+  if not registry then return end
+
+  -- Blur old element
+  if old_name then
+    local old_element = registry:get(old_name)
+    if old_element then
+      self:_remove_element_hover(old_element)
+      old_element:blur()
+    end
+  end
+
+  -- Focus new element
+  if new_name and element then
+    self:_apply_element_hover(element)
+    element:focus()
+  end
+
+  self._hovered_element = new_name
+end
+
+---Apply hover style to an element
+---@param element TrackedElement
+---@private
+function FloatWindow:_apply_element_hover(element)
+  if not element then return end
+  if not self._element_hover_ns then return end
+  if not self.bufnr or not vim.api.nvim_buf_is_valid(self.bufnr) then return end
+
+  -- Get hover style from element or type defaults
+  local hover_style = element.hover_style
+  if not hover_style then
+    local Types = require("nvim-float.elements.types")
+    hover_style = Types.get_hover_style(element.type)
+  end
+
+  if not hover_style then return end
+
+  -- Map style name to highlight group
+  local hl_group = self:_get_highlight_group(hover_style)
+  if not hl_group then return end
+
+  -- Apply highlight using extmark
+  local row = element.row
+  local col_start = element.col_start
+  local col_end = element.col_end
+
+  if element.row_based then
+    -- For row-based elements, highlight entire line
+    local line = vim.api.nvim_buf_get_lines(self.bufnr, row, row + 1, false)[1]
+    if line then
+      col_end = #line
+    end
+  end
+
+  vim.api.nvim_buf_set_extmark(self.bufnr, self._element_hover_ns, row, col_start, {
+    end_row = row,
+    end_col = col_end,
+    hl_group = hl_group,
+    priority = 200,  -- High priority to override base highlights
+  })
+end
+
+---Remove hover style from an element
+---@param element TrackedElement
+---@private
+function FloatWindow:_remove_element_hover(element)
+  if not element then return end
+  if not self._element_hover_ns then return end
+  if not self.bufnr or not vim.api.nvim_buf_is_valid(self.bufnr) then return end
+
+  -- Clear all extmarks in the hover namespace (simpler than tracking individual marks)
+  vim.api.nvim_buf_clear_namespace(self.bufnr, self._element_hover_ns, 0, -1)
+end
+
+---Get highlight group for a style name
+---@param style string Style name
+---@return string? hl_group
+---@private
+function FloatWindow:_get_highlight_group(style)
+  -- Map common style names to nvim-float highlight groups
+  local style_to_hl = {
+    -- Base styles
+    normal = "NvimFloatNormal",
+    border = "NvimFloatBorder",
+    title = "NvimFloatTitle",
+    selected = "NvimFloatSelected",
+    hint = "NvimFloatHint",
+    -- Text styles
+    header = "NvimFloatHeader",
+    subheader = "NvimFloatSubheader",
+    section = "NvimFloatSection",
+    label = "NvimFloatLabel",
+    value = "NvimFloatValue",
+    key = "NvimFloatKey",
+    -- Emphasis
+    emphasis = "NvimFloatEmphasis",
+    strong = "NvimFloatStrong",
+    muted = "NvimFloatMuted",
+    dimmed = "NvimFloatDimmed",
+    -- Status
+    success = "NvimFloatSuccess",
+    warning = "NvimFloatWarning",
+    error = "NvimFloatError",
+    -- Code
+    code = "NvimFloatCode",
+    code_keyword = "NvimFloatCodeKeyword",
+    code_string = "NvimFloatCodeString",
+    code_number = "NvimFloatCodeNumber",
+    code_comment = "NvimFloatCodeComment",
+    code_function = "NvimFloatCodeFunction",
+    -- Input styles
+    input = "NvimFloatInput",
+    input_active = "NvimFloatInputActive",
+    input_placeholder = "NvimFloatInputPlaceholder",
+    dropdown = "NvimFloatDropdown",
+    dropdown_active = "NvimFloatDropdownActive",
+    dropdown_selected = "NvimFloatDropdownSelected",
+  }
+
+  return style_to_hl[style]
+end
+
+---Focus a specific element by name (move cursor to it)
+---@param name string Element name
+---@return boolean success
+function FloatWindow:focus_element(name)
+  local registry = self:get_element_registry()
+  if not registry then return false end
+
+  local element = registry:get(name)
+  if not element then return false end
+
+  if not self:is_valid() then return false end
+
+  -- Move cursor to element position
+  local row = element.row + 1  -- Convert to 1-indexed
+  local col = element.col_start
+  vim.api.nvim_win_set_cursor(self.winid, { row, col })
+
+  return true
+end
+
+---Check if cursor is currently on a specific element
+---@param name string Element name
+---@return boolean
+function FloatWindow:is_cursor_on(name)
+  local element = self:get_element_at_cursor()
+  return element and element.name == name or false
+end
+
+---Get the currently hovered element (if tracking is enabled)
+---@return TrackedElement?
+function FloatWindow:get_hovered_element()
+  if not self._hovered_element then return nil end
+
+  local registry = self:get_element_registry()
+  if registry then
+    return registry:get(self._hovered_element)
+  end
+  return nil
 end
 
 ---Render/update content from content builder

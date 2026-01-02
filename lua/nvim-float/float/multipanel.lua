@@ -947,6 +947,78 @@ function MultiPanelWindow:get_panel_content_builder(panel_name)
   return nil
 end
 
+-- ============================================================================
+-- Advanced Element Tracking (Hover, Focus/Blur Callbacks)
+-- ============================================================================
+
+---Enable element tracking for a specific panel
+---@param panel_name string Panel name
+function MultiPanelWindow:enable_element_tracking(panel_name)
+  local panel = self.panels[panel_name]
+  if panel and panel.float then
+    panel.float:enable_element_tracking()
+  end
+end
+
+---Disable element tracking for a specific panel
+---@param panel_name string Panel name
+function MultiPanelWindow:disable_element_tracking(panel_name)
+  local panel = self.panels[panel_name]
+  if panel and panel.float then
+    panel.float:disable_element_tracking()
+  end
+end
+
+---Enable element tracking for all panels
+function MultiPanelWindow:enable_all_element_tracking()
+  for name, _ in pairs(self.panels) do
+    self:enable_element_tracking(name)
+  end
+end
+
+---Disable element tracking for all panels
+function MultiPanelWindow:disable_all_element_tracking()
+  for name, _ in pairs(self.panels) do
+    self:disable_element_tracking(name)
+  end
+end
+
+---Focus a specific element by name in a panel
+---@param panel_name string Panel name
+---@param element_name string Element name
+---@return boolean success
+function MultiPanelWindow:focus_element(panel_name, element_name)
+  local panel = self.panels[panel_name]
+  if panel and panel.float then
+    -- Focus the panel first
+    self:focus_panel(panel_name)
+    return panel.float:focus_element(element_name)
+  end
+  return false
+end
+
+---Check if cursor is on a specific element in the focused panel
+---@param element_name string Element name
+---@return boolean
+function MultiPanelWindow:is_cursor_on(element_name)
+  local panel = self.panels[self.focused_panel]
+  if panel and panel.float then
+    return panel.float:is_cursor_on(element_name)
+  end
+  return false
+end
+
+---Get the currently hovered element in a panel
+---@param panel_name string Panel name
+---@return TrackedElement?
+function MultiPanelWindow:get_hovered_element(panel_name)
+  local panel = self.panels[panel_name]
+  if panel and panel.float then
+    return panel.float:get_hovered_element()
+  end
+  return nil
+end
+
 ---Create junction overlay windows for proper border intersections
 ---@param layouts PanelLayout[] Panel layouts
 function MultiPanelWindow:_create_junction_overlays(layouts)
