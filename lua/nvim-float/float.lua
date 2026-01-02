@@ -974,12 +974,14 @@ end
 
 ---Enable element tracking (cursor-aware hover styles and focus/blur callbacks)
 ---Call this after rendering content to enable hover effects
-function FloatWindow:enable_element_tracking()
+---@param on_cursor_change fun(element: TrackedElement?)? Optional callback when cursor changes elements
+function FloatWindow:enable_element_tracking(on_cursor_change)
   if self._element_tracking_enabled then return end
   if not self:is_valid() then return end
 
   self._element_tracking_enabled = true
   self._element_hover_ns = vim.api.nvim_create_namespace("nvim_float_element_hover")
+  self._element_cursor_callback = on_cursor_change
 
   -- Setup CursorMoved autocmd
   vim.api.nvim_create_autocmd("CursorMoved", {
@@ -1050,6 +1052,11 @@ function FloatWindow:_on_element_cursor_moved()
   end
 
   self._hovered_element = new_name
+
+  -- Call user callback if provided
+  if self._element_cursor_callback then
+    self._element_cursor_callback(element)
+  end
 end
 
 ---Apply hover style to an element

@@ -953,10 +953,11 @@ end
 
 ---Enable element tracking for a specific panel
 ---@param panel_name string Panel name
-function MultiPanelWindow:enable_element_tracking(panel_name)
+---@param on_cursor_change fun(element: TrackedElement?)? Optional callback when cursor changes elements
+function MultiPanelWindow:enable_element_tracking(panel_name, on_cursor_change)
   local panel = self.panels[panel_name]
   if panel and panel.float then
-    panel.float:enable_element_tracking()
+    panel.float:enable_element_tracking(on_cursor_change)
   end
 end
 
