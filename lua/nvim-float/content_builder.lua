@@ -2,9 +2,13 @@
 ---Build styled content for floating windows using theme colors
 ---Maps semantic content types to highlight groups
 ---Supports input fields for interactive forms
+---Supports element tracking for cursor-based queries
 ---@module nvim-float.content_builder
 local ContentBuilder = {}
 ContentBuilder.__index = ContentBuilder
+
+-- Import element tracking module
+local Elements = require("nvim-float.elements")
 
 ---Semantic style mappings to nvim-float highlight groups
 ---These map user-friendly style names to actual theme groups
@@ -156,6 +160,8 @@ function ContentBuilder.new(opts)
   self._multi_dropdowns = {}  -- Map of key -> MultiDropdownField
   self._multi_dropdown_order = {}  -- Ordered list of multi-dropdown keys
   self._max_width = opts.max_width  -- Optional: cap input widths to fit within this
+  -- Element tracking
+  self._registry = Elements.create_registry()  -- ElementRegistry for tracked elements
   return self
 end
 
@@ -183,6 +189,7 @@ function ContentBuilder:clear()
   self._dropdown_order = {}
   self._multi_dropdowns = {}
   self._multi_dropdown_order = {}
+  self._registry:clear()
   return self
 end
 
@@ -220,8 +227,9 @@ end
 ---Add a styled line (entire line has one style)
 ---@param text string Line text
 ---@param style string Style name from STYLE_MAPPINGS
+---@param opts? { track?: string|table } Optional tracking: string for name only, or table for full options
 ---@return ContentBuilder self For chaining
-function ContentBuilder:styled(text, style)
+function ContentBuilder:styled(text, style, opts)
   local line = {
     text = text or "",
     highlights = {},
@@ -234,6 +242,33 @@ function ContentBuilder:styled(text, style)
     })
   end
   table.insert(self._lines, line)
+
+  -- Handle element tracking
+  if opts and opts.track then
+    local track = opts.track
+    local track_opts = type(track) == "string" and { name = track } or track
+
+    -- Register element with auto-calculated positions
+    local row = #self._lines - 1  -- 0-indexed
+    self._registry:register({
+      name = track_opts.name,
+      type = track_opts.type or Elements.ElementType.TEXT,
+      row = row,
+      col_start = 0,
+      col_end = #(text or ""),
+      row_based = track_opts.row_based or false,
+      text = text,
+      data = track_opts.data,
+      style = style,
+      hover_style = track_opts.hover_style,
+      on_interact = track_opts.on_interact,
+      on_focus = track_opts.on_focus,
+      on_blur = track_opts.on_blur,
+      on_change = track_opts.on_change,
+      value = track_opts.value,
+    })
+  end
+
   return self
 end
 
@@ -341,11 +376,12 @@ function ContentBuilder:key_value(key, value)
 end
 
 ---Add a line with mixed styles using spans
----@param spans table[] Array of { text = string, style = string? }
+---@param spans table[] Array of { text = string, style = string?, track = string|table? }
 ---@return ContentBuilder self For chaining
 function ContentBuilder:spans(spans)
   local text_parts = {}
   local highlights = {}
+  local tracked_elements = {}  -- Collect elements to register after line is added
   local pos = 0
 
   for _, span in ipairs(spans) do
@@ -369,6 +405,29 @@ function ContentBuilder:spans(spans)
       })
     end
 
+    -- Collect tracking info for this span
+    if span.track then
+      local track = span.track
+      local track_opts = type(track) == "string" and { name = track } or track
+
+      table.insert(tracked_elements, {
+        name = track_opts.name,
+        type = track_opts.type or Elements.ElementType.TEXT,
+        col_start = pos,
+        col_end = pos + #span_text,
+        row_based = track_opts.row_based or false,
+        text = span_text,
+        data = track_opts.data,
+        style = span.style,
+        hover_style = track_opts.hover_style,
+        on_interact = track_opts.on_interact,
+        on_focus = track_opts.on_focus,
+        on_blur = track_opts.on_blur,
+        on_change = track_opts.on_change,
+        value = track_opts.value,
+      })
+    end
+
     pos = pos + #span_text
   end
 
@@ -376,7 +435,96 @@ function ContentBuilder:spans(spans)
     text = table.concat(text_parts, ""),
     highlights = highlights,
   })
+
+  -- Register tracked elements now that we know the row
+  local row = #self._lines - 1  -- 0-indexed
+  for _, elem in ipairs(tracked_elements) do
+    elem.row = row
+    self._registry:register(elem)
+  end
+
   return self
+end
+
+-- ============================================================================
+-- Element Tracking
+-- ============================================================================
+
+---Add a tracked row element (row-based by default)
+---This is a convenience method for adding content that owns its entire row
+---@param name string Element name
+---@param opts table Options: { type?, row_based?, data?, on_interact?, on_focus?, on_blur?, on_change?, value?, style?, hover_style?, text? }
+---@return ContentBuilder self For chaining
+function ContentBuilder:tracked(name, opts)
+  opts = opts or {}
+
+  -- If text is provided, add it as a styled line
+  local text = opts.text or ""
+  local style = opts.style
+
+  local line = {
+    text = text,
+    highlights = {},
+  }
+
+  if style and STYLE_MAPPINGS[style] then
+    table.insert(line.highlights, {
+      col_start = 0,
+      col_end = #text,
+      style = style,
+    })
+  end
+
+  table.insert(self._lines, line)
+
+  -- Register the element (row-based by default for tracked())
+  local row = #self._lines - 1  -- 0-indexed
+  self._registry:register({
+    name = name,
+    type = opts.type or Elements.ElementType.TEXT,
+    row = row,
+    col_start = 0,
+    col_end = #text,
+    row_based = opts.row_based ~= false,  -- Default to true for tracked()
+    text = text,
+    data = opts.data,
+    style = style,
+    hover_style = opts.hover_style,
+    on_interact = opts.on_interact,
+    on_focus = opts.on_focus,
+    on_blur = opts.on_blur,
+    on_change = opts.on_change,
+    value = opts.value,
+  })
+
+  return self
+end
+
+---Get the element registry
+---@return ElementRegistry registry The element registry with all tracked elements
+function ContentBuilder:get_registry()
+  return self._registry
+end
+
+---Get a tracked element by name
+---@param name string Element name
+---@return TrackedElement? element The element or nil
+function ContentBuilder:get_element(name)
+  return self._registry:get(name)
+end
+
+---Get element at a specific position
+---@param row number 0-indexed row
+---@param col number 0-indexed column
+---@return TrackedElement? element The element at position or nil
+function ContentBuilder:get_element_at(row, col)
+  return self._registry:get_at(row, col)
+end
+
+---Check if any elements are tracked
+---@return boolean
+function ContentBuilder:has_tracked_elements()
+  return not self._registry:is_empty()
 end
 
 ---Add an input field
