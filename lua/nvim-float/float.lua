@@ -837,6 +837,137 @@ function FloatWindow:get_content_builder()
   return self._content_builder
 end
 
+-- ============================================================================
+-- Element Tracking Support
+-- ============================================================================
+
+---Get the element registry from the content builder
+---@return ElementRegistry?
+function FloatWindow:get_element_registry()
+  if self._content_builder then
+    return self._content_builder:get_registry()
+  end
+  return nil
+end
+
+---Get element at current cursor position
+---@return TrackedElement? element The element at cursor, or nil
+function FloatWindow:get_element_at_cursor()
+  if not self:is_valid() then return nil end
+
+  local registry = self:get_element_registry()
+  if not registry then return nil end
+
+  local cursor = vim.api.nvim_win_get_cursor(self.winid)
+  local row = cursor[1] - 1  -- Convert to 0-indexed
+  local col = cursor[2]      -- Already 0-indexed
+
+  return registry:get_at(row, col)
+end
+
+---Get element by name
+---@param name string Element name
+---@return TrackedElement? element
+function FloatWindow:get_element(name)
+  local registry = self:get_element_registry()
+  if registry then
+    return registry:get(name)
+  end
+  return nil
+end
+
+---Get all elements of a specific type
+---@param element_type string Element type to filter by
+---@return TrackedElement[] elements
+function FloatWindow:get_elements_by_type(element_type)
+  local registry = self:get_element_registry()
+  if registry then
+    return registry:get_by_type(element_type)
+  end
+  return {}
+end
+
+---Get all interactive elements
+---@return TrackedElement[] elements
+function FloatWindow:get_interactive_elements()
+  local registry = self:get_element_registry()
+  if registry then
+    return registry:get_interactive()
+  end
+  return {}
+end
+
+---Interact with element at current cursor position
+---@return boolean success Whether an element was interacted with
+function FloatWindow:interact_at_cursor()
+  local element = self:get_element_at_cursor()
+  if not element then return false end
+
+  -- For input/dropdown/multi_dropdown elements, delegate to InputManager
+  if self._input_manager then
+    local element_type = element.type
+    if element_type == "input" or element_type == "dropdown" or element_type == "multi_dropdown" then
+      -- Use the element name as the field key (they match)
+      return self._input_manager:activate_field(element.name)
+    end
+  end
+
+  -- For other interactive elements, call their interact handler
+  if element:is_interactive() then
+    element:interact()
+    return true
+  end
+
+  return false
+end
+
+---Focus next interactive element
+---@return boolean success Whether focus moved to an element
+function FloatWindow:focus_next_element()
+  local registry = self:get_element_registry()
+  if not registry then return false end
+
+  local current = self:get_element_at_cursor()
+  local current_name = current and current.name or nil
+  local next_el = registry:get_next_interactive(current_name)
+
+  if next_el and self:is_valid() then
+    -- Move cursor to element position (convert to 1-indexed row)
+    local row = next_el.row + 1
+    local col = next_el.col_start
+    vim.api.nvim_win_set_cursor(self.winid, { row, col })
+    return true
+  end
+  return false
+end
+
+---Focus previous interactive element
+---@return boolean success Whether focus moved to an element
+function FloatWindow:focus_prev_element()
+  local registry = self:get_element_registry()
+  if not registry then return false end
+
+  local current = self:get_element_at_cursor()
+  local current_name = current and current.name or nil
+  local prev_el = registry:get_prev_interactive(current_name)
+
+  if prev_el and self:is_valid() then
+    -- Move cursor to element position (convert to 1-indexed row)
+    local row = prev_el.row + 1
+    local col = prev_el.col_start
+    vim.api.nvim_win_set_cursor(self.winid, { row, col })
+    return true
+  end
+  return false
+end
+
+---Check if window has any tracked elements
+---@return boolean
+function FloatWindow:has_elements()
+  local registry = self:get_element_registry()
+  return registry and not registry:is_empty() or false
+end
+
 ---Render/update content from content builder
 ---Call this after modifying the content builder to refresh the display
 function FloatWindow:render()

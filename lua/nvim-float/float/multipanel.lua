@@ -799,6 +799,154 @@ function MultiPanelWindow:update_inputs(panel_name, content_builder)
   end
 end
 
+-- ============================================================================
+-- Element Tracking Support
+-- ============================================================================
+
+---Get element at cursor in the focused panel
+---@return TrackedElement? element The element at cursor, or nil
+function MultiPanelWindow:get_element_at_cursor()
+  if self._closed then return nil end
+
+  local panel = self.panels[self.focused_panel]
+  if panel and panel.float then
+    return panel.float:get_element_at_cursor()
+  end
+  return nil
+end
+
+---Get element by name from a specific panel
+---@param panel_name string Panel name
+---@param element_name string Element name
+---@return TrackedElement? element
+function MultiPanelWindow:get_element(panel_name, element_name)
+  local panel = self.panels[panel_name]
+  if panel and panel.float then
+    return panel.float:get_element(element_name)
+  end
+  return nil
+end
+
+---Get all elements of a specific type from a panel
+---@param panel_name string Panel name
+---@param element_type string Element type to filter by
+---@return TrackedElement[] elements
+function MultiPanelWindow:get_elements_by_type(panel_name, element_type)
+  local panel = self.panels[panel_name]
+  if panel and panel.float then
+    return panel.float:get_elements_by_type(element_type)
+  end
+  return {}
+end
+
+---Get all interactive elements from a panel
+---@param panel_name string Panel name
+---@return TrackedElement[] elements
+function MultiPanelWindow:get_interactive_elements(panel_name)
+  local panel = self.panels[panel_name]
+  if panel and panel.float then
+    return panel.float:get_interactive_elements()
+  end
+  return {}
+end
+
+---Interact with element at cursor in the focused panel
+---@return boolean success Whether an element was interacted with
+function MultiPanelWindow:interact_at_cursor()
+  if self._closed then return false end
+
+  local panel = self.panels[self.focused_panel]
+  if not panel or not panel.float then return false end
+
+  -- Get element at cursor
+  local element = panel.float:get_element_at_cursor()
+  if not element then return false end
+
+  -- For input/dropdown/multi_dropdown elements, delegate to panel's InputManager
+  if panel.input_manager then
+    local element_type = element.type
+    if element_type == "input" or element_type == "dropdown" or element_type == "multi_dropdown" then
+      return panel.input_manager:activate_field(element.name)
+    end
+  end
+
+  -- For other interactive elements, call their interact handler
+  if element:is_interactive() then
+    element:interact()
+    return true
+  end
+
+  return false
+end
+
+---Focus next interactive element in the focused panel
+---@return boolean success Whether focus moved to an element
+function MultiPanelWindow:focus_next_element()
+  if self._closed then return false end
+
+  local panel = self.panels[self.focused_panel]
+  if panel and panel.float then
+    return panel.float:focus_next_element()
+  end
+  return false
+end
+
+---Focus previous interactive element in the focused panel
+---@return boolean success Whether focus moved to an element
+function MultiPanelWindow:focus_prev_element()
+  if self._closed then return false end
+
+  local panel = self.panels[self.focused_panel]
+  if panel and panel.float then
+    return panel.float:focus_prev_element()
+  end
+  return false
+end
+
+---Get the element registry from a panel's content builder
+---@param panel_name string Panel name
+---@return ElementRegistry?
+function MultiPanelWindow:get_element_registry(panel_name)
+  local panel = self.panels[panel_name]
+  if panel and panel.float then
+    return panel.float:get_element_registry()
+  end
+  return nil
+end
+
+---Check if a panel has any tracked elements
+---@param panel_name string Panel name
+---@return boolean
+function MultiPanelWindow:has_elements(panel_name)
+  local panel = self.panels[panel_name]
+  if panel and panel.float then
+    return panel.float:has_elements()
+  end
+  return false
+end
+
+---Associate a ContentBuilder with a panel for element tracking
+---Call this after rendering with a ContentBuilder to enable element queries
+---@param panel_name string Panel name
+---@param content_builder ContentBuilder ContentBuilder instance
+function MultiPanelWindow:set_panel_content_builder(panel_name, content_builder)
+  local panel = self.panels[panel_name]
+  if panel and panel.float then
+    panel.float._content_builder = content_builder
+  end
+end
+
+---Get the ContentBuilder associated with a panel
+---@param panel_name string Panel name
+---@return ContentBuilder?
+function MultiPanelWindow:get_panel_content_builder(panel_name)
+  local panel = self.panels[panel_name]
+  if panel and panel.float then
+    return panel.float:get_content_builder()
+  end
+  return nil
+end
+
 ---Create junction overlay windows for proper border intersections
 ---@param layouts PanelLayout[] Panel layouts
 function MultiPanelWindow:_create_junction_overlays(layouts)

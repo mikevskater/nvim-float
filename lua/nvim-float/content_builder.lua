@@ -700,7 +700,7 @@ function ContentBuilder:input(key, opts)
 
   table.insert(self._lines, line)
 
-  -- Store input field info
+  -- Store input field info (legacy - for InputManager compatibility)
   local line_num = #self._lines
   self._inputs[key] = {
     key = key,
@@ -718,6 +718,29 @@ function ContentBuilder:input(key, opts)
     prefix_len = #prefix,  -- Store prefix length for line reconstruction
   }
   table.insert(self._input_order, key)
+
+  -- Register as tracked element
+  local row = line_num - 1  -- 0-indexed
+  self._registry:register({
+    name = key,
+    type = Elements.ElementType.INPUT,
+    row = row,
+    col_start = input_value_start,
+    col_end = input_value_end,
+    row_based = false,
+    text = display_text,
+    data = {
+      label = label,
+      placeholder = placeholder,
+      default_width = default_width,
+      min_width = min_width,
+      prefix_len = #prefix,
+    },
+    style = is_placeholder and "input_placeholder" or "input",
+    hover_style = "input_active",
+    value = value,
+    on_change = opts.on_change,
+  })
 
   return self
 end
@@ -928,7 +951,7 @@ function ContentBuilder:dropdown(key, opts)
 
   table.insert(self._lines, line)
 
-  -- Store dropdown field info
+  -- Store dropdown field info (legacy - for InputManager compatibility)
   local line_num = #self._lines
   self._dropdowns[key] = {
     key = key,
@@ -947,6 +970,30 @@ function ContentBuilder:dropdown(key, opts)
     is_placeholder = is_placeholder,
   }
   table.insert(self._dropdown_order, key)
+
+  -- Register as tracked element
+  local row = line_num - 1  -- 0-indexed
+  self._registry:register({
+    name = key,
+    type = Elements.ElementType.DROPDOWN,
+    row = row,
+    col_start = input_value_start,
+    col_end = input_value_end,
+    row_based = false,
+    text = display_text,
+    data = {
+      label = label,
+      options = options,
+      placeholder = placeholder,
+      max_height = max_height,
+      text_width = text_width,
+      prefix_len = #prefix,
+    },
+    style = is_placeholder and "input_placeholder" or "dropdown",
+    hover_style = "dropdown_active",
+    value = value,
+    on_change = opts.on_change,
+  })
 
   return self
 end
@@ -1156,7 +1203,7 @@ function ContentBuilder:multi_dropdown(key, opts)
 
   table.insert(self._lines, line)
 
-  -- Store multi-dropdown field info
+  -- Store multi-dropdown field info (legacy - for InputManager compatibility)
   local line_num = #self._lines
   self._multi_dropdowns[key] = {
     key = key,
@@ -1177,6 +1224,32 @@ function ContentBuilder:multi_dropdown(key, opts)
     select_all_option = select_all_option,
   }
   table.insert(self._multi_dropdown_order, key)
+
+  -- Register as tracked element
+  local row = line_num - 1  -- 0-indexed
+  self._registry:register({
+    name = key,
+    type = Elements.ElementType.MULTI_DROPDOWN,
+    row = row,
+    col_start = input_value_start,
+    col_end = input_value_end,
+    row_based = false,
+    text = display_text,
+    data = {
+      label = label,
+      options = options,
+      placeholder = placeholder,
+      max_height = max_height,
+      text_width = text_width,
+      prefix_len = #prefix,
+      display_mode = display_mode,
+      select_all_option = select_all_option,
+    },
+    style = is_placeholder and "input_placeholder" or "dropdown",
+    hover_style = "dropdown_active",
+    value = vim.deepcopy(values),
+    on_change = opts.on_change,
+  })
 
   return self
 end

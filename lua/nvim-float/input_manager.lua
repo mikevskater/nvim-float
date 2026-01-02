@@ -574,6 +574,16 @@ function InputManager:_activate_field(key)
   end
 end
 
+---Public API: Activate a field by key (for element tracking integration)
+---@param key string Field key (input, dropdown, or multi-dropdown)
+---@return boolean success Whether the field was activated
+function InputManager:activate_field(key)
+  local field_info = self:_get_field(key)
+  if not field_info then return false end
+  self:_activate_field(key)
+  return true
+end
+
 ---Setup keymaps for input navigation
 function InputManager:_setup_input_keymaps()
   local opts = { buffer = self.bufnr, noremap = true, silent = true }
