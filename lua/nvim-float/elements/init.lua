@@ -9,6 +9,7 @@
 
 local ElementModule = require("nvim-float.elements.element")
 local RegistryModule = require("nvim-float.elements.registry")
+local TypesModule = require("nvim-float.elements.types")
 
 local M = {}
 
@@ -18,6 +19,9 @@ M.ElementRegistry = RegistryModule.ElementRegistry
 
 -- Export element type constants
 M.ElementType = ElementModule.ElementType
+
+-- Export types module
+M.Types = TypesModule
 
 ---Create a new TrackedElement
 ---@param opts table Element options
@@ -30,6 +34,20 @@ end
 ---@return ElementRegistry
 function M.create_registry()
   return RegistryModule.ElementRegistry.new()
+end
+
+---Get element type definition
+---@param type_name string Type name
+---@return ElementTypeDefinition?
+function M.get_type(type_name)
+  return TypesModule.get(type_name)
+end
+
+---Register a custom element type
+---@param name string Type name
+---@param definition ElementTypeDefinition Type definition
+function M.register_type(name, definition)
+  TypesModule.register(name, definition)
 end
 
 return M

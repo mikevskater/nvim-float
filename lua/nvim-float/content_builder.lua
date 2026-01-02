@@ -527,6 +527,101 @@ function ContentBuilder:has_tracked_elements()
   return not self._registry:is_empty()
 end
 
+---Create a button span (for use in spans())
+---Returns a span table that can be included in a spans() call
+---@param text string Button text
+---@param opts table Options: { name, on_interact?, data?, style?, hover_style? }
+---@return table span Span table for use in spans()
+function ContentBuilder:button(text, opts)
+  opts = opts or {}
+  local Types = Elements.Types
+
+  return {
+    text = text,
+    style = opts.style or Types.get_default_style("button"),
+    track = {
+      name = opts.name or ("button_" .. text:gsub("%W", "_")),
+      type = Elements.ElementType.BUTTON,
+      data = opts.data or { callback = opts.on_interact },
+      on_interact = opts.on_interact,
+      hover_style = opts.hover_style or Types.get_hover_style("button"),
+    },
+  }
+end
+
+---Create an action span (for use in spans())
+---Actions are inline clickable elements like [Edit], [Delete]
+---@param text string Action text (e.g., "[Edit]")
+---@param opts table Options: { name, on_interact?, data?, style?, hover_style? }
+---@return table span Span table for use in spans()
+function ContentBuilder:action(text, opts)
+  opts = opts or {}
+  local Types = Elements.Types
+
+  return {
+    text = text,
+    style = opts.style or Types.get_default_style("action"),
+    track = {
+      name = opts.name or ("action_" .. text:gsub("%W", "_")),
+      type = Elements.ElementType.ACTION,
+      data = opts.data or { callback = opts.on_interact },
+      on_interact = opts.on_interact,
+      hover_style = opts.hover_style or Types.get_hover_style("action"),
+    },
+  }
+end
+
+---Create a toggle span (for use in spans())
+---@param text string Toggle text
+---@param opts table Options: { name, value?, on_change?, data?, style?, hover_style? }
+---@return table span Span table for use in spans()
+function ContentBuilder:toggle(text, opts)
+  opts = opts or {}
+  local Types = Elements.Types
+
+  return {
+    text = text,
+    style = opts.style or Types.get_default_style("toggle"),
+    track = {
+      name = opts.name or ("toggle_" .. text:gsub("%W", "_")),
+      type = Elements.ElementType.TOGGLE,
+      value = opts.value or false,
+      data = opts.data,
+      on_change = opts.on_change,
+      hover_style = opts.hover_style or Types.get_hover_style("toggle"),
+    },
+  }
+end
+
+---Create a link span (for use in spans())
+---@param text string Link text
+---@param opts table Options: { name, url?, on_interact?, data?, style?, hover_style? }
+---@return table span Span table for use in spans()
+function ContentBuilder:link(text, opts)
+  opts = opts or {}
+  local Types = Elements.Types
+
+  local data = opts.data or {}
+  if opts.url then
+    data.url = opts.url
+  end
+  if opts.on_interact then
+    data.callback = opts.on_interact
+  end
+
+  return {
+    text = text,
+    style = opts.style or Types.get_default_style("link"),
+    track = {
+      name = opts.name or ("link_" .. text:gsub("%W", "_")),
+      type = Elements.ElementType.LINK,
+      data = data,
+      on_interact = opts.on_interact,
+      hover_style = opts.hover_style or Types.get_hover_style("link"),
+    },
+  }
+end
+
 ---Add an input field
 ---@param key string Unique identifier for retrieving the value
 ---@param opts table Options: { label = string?, value = string?, placeholder = string?, width = number?, min_width = number?, label_style = string? }
