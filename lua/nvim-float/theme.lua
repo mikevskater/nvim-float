@@ -10,37 +10,37 @@ local M = {}
 ---@field link_to_existing boolean? Link to existing Neovim highlight groups (default: true)
 ---@field override table<string, table>? Custom highlight overrides
 
----Default highlight group definitions
+---Default highlight group definitions (VS Code Dark+ inspired, matching SSNS)
 ---Each entry is { fg, bg, attrs } or { link = "GroupName" }
 local default_highlights = {
   -- Float window
   NvimFloatNormal = { link = "NormalFloat" },
-  NvimFloatBorder = { link = "FloatBorder" },
-  NvimFloatTitle = { link = "FloatTitle" },
-  NvimFloatSelected = { link = "PmenuSel" },
+  NvimFloatBorder = { fg = "#569CD6" },
+  NvimFloatTitle = { fg = "#C586C0", bold = true },
+  NvimFloatSelected = { fg = "#FFFFFF", bg = "#04395E" },
   NvimFloatCursor = { link = "Cursor" },
-  NvimFloatHint = { link = "Comment" },
+  NvimFloatHint = { fg = "#858585" },
 
   -- Input fields
   NvimFloatInput = { bg = "#2D2D2D", fg = "#CCCCCC" },
   NvimFloatInputActive = { bg = "#3C3C3C", fg = "#FFFFFF", bold = true },
   NvimFloatInputPlaceholder = { bg = "#2D2D2D", fg = "#666666", italic = true },
-  NvimFloatInputLabel = { link = "Label" },
-  NvimFloatInputBorder = { link = "FloatBorder" },
+  NvimFloatInputLabel = { fg = "#569CD6" },
+  NvimFloatInputBorder = { fg = "#569CD6" },
 
   -- Dropdowns
-  NvimFloatDropdown = { link = "NvimFloatInput" },
-  NvimFloatDropdownSelected = { link = "PmenuSel" },
-  NvimFloatDropdownBorder = { link = "FloatBorder" },
+  NvimFloatDropdown = { bg = "#2D2D2D", fg = "#CCCCCC" },
+  NvimFloatDropdownSelected = { fg = "#FFFFFF", bg = "#04395E" },
+  NvimFloatDropdownBorder = { fg = "#569CD6" },
 
   -- Scrollbar
   NvimFloatScrollbar = { bg = "NONE" },
-  NvimFloatScrollbarThumb = { link = "NvimFloatTitle" },
-  NvimFloatScrollbarTrack = { link = "NvimFloatBorder" },
-  NvimFloatScrollbarArrow = { link = "NvimFloatHint" },
+  NvimFloatScrollbarThumb = { fg = "#569CD6" },
+  NvimFloatScrollbarTrack = { fg = "#3C3C3C" },
+  NvimFloatScrollbarArrow = { fg = "#858585" },
 
   -- Content styles - headers and structure
-  NvimFloatHeader = { fg = "#DCDCAA", bold = true },
+  NvimFloatHeader = { fg = "#9CDCFE", bold = true },
   NvimFloatSubheader = { fg = "#9CDCFE", bold = true },
   NvimFloatSection = { fg = "#C586C0", bold = true },
 
@@ -58,7 +58,7 @@ local default_highlights = {
   -- Content styles - status
   NvimFloatSuccess = { fg = "#4EC9B0" },
   NvimFloatWarning = { fg = "#D7BA7D" },
-  NvimFloatError = { fg = "#F44747" },
+  NvimFloatError = { fg = "#F48771" },
 
   -- Content styles - muted
   NvimFloatMuted = { fg = "#6A6A6A" },
@@ -78,6 +78,26 @@ local default_highlights = {
 ---@type table<string, table>
 local custom_highlights = {}
 
+---Persisted style overrides from style editor
+---@type table<string, table>?
+local persisted_overrides = nil
+
+---Load persisted style overrides from disk
+---@return table<string, table>?
+local function load_persisted_overrides()
+  local filepath = vim.fn.stdpath("data") .. "/nvim_float_style.lua"
+  if vim.fn.filereadable(filepath) ~= 1 then
+    return nil
+  end
+
+  local ok, result = pcall(dofile, filepath)
+  if not ok or type(result) ~= "table" then
+    return nil
+  end
+
+  return result
+end
+
 ---Register additional highlight groups
 ---Allows plugins to add their own highlight groups
 ---@param highlights table<string, table> Map of highlight group name -> definition
@@ -96,11 +116,18 @@ end
 function M.setup(opts)
   opts = opts or {}
 
+  -- Load persisted overrides from style editor (if any)
+  persisted_overrides = load_persisted_overrides()
+
   -- Apply default highlights
+  -- Priority: persisted > user config > default
   for name, def in pairs(default_highlights) do
-    -- Check for user override
+    local persisted_def = persisted_overrides and persisted_overrides[name]
     local user_def = opts.override and opts.override[name]
-    if user_def then
+
+    if persisted_def then
+      vim.api.nvim_set_hl(0, name, persisted_def)
+    elseif user_def then
       vim.api.nvim_set_hl(0, name, user_def)
     else
       vim.api.nvim_set_hl(0, name, def)
@@ -109,8 +136,12 @@ function M.setup(opts)
 
   -- Apply custom highlights registered by plugins
   for name, def in pairs(custom_highlights) do
+    local persisted_def = persisted_overrides and persisted_overrides[name]
     local user_def = opts.override and opts.override[name]
-    if user_def then
+
+    if persisted_def then
+      vim.api.nvim_set_hl(0, name, persisted_def)
+    elseif user_def then
       vim.api.nvim_set_hl(0, name, user_def)
     else
       vim.api.nvim_set_hl(0, name, def)
@@ -187,6 +218,13 @@ function M.get_all_groups()
   end
   table.sort(groups)
   return groups
+end
+
+---Get the default highlight definition for a group
+---@param name string Highlight group name
+---@return table? definition The default definition or nil
+function M.get_default_highlight(name)
+  return default_highlights[name]
 end
 
 return M

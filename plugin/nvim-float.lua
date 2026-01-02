@@ -22,3 +22,11 @@ vim.api.nvim_create_user_command("NvimFloatDemo", function()
 end, {
   desc = "Show nvim-float demo window",
 })
+
+-- Style editor command
+vim.api.nvim_create_user_command("NvimFloatStyle", function()
+  local nvim_float = require("nvim-float")
+  nvim_float.show_style_editor()
+end, {
+  desc = "Open nvim-float style editor",
+})

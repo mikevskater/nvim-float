@@ -13,7 +13,7 @@
 
 local M = {}
 
-M.version = "0.5.0"
+M.version = "0.6.0"
 
 -- Lazy-loaded submodules
 local _float = nil
@@ -23,6 +23,7 @@ local _config = nil
 local _theme = nil
 local _form = nil
 local _interactive = nil
+local _style_editor = nil
 
 ---Get the config module (lazy-loaded)
 ---@return table
@@ -85,6 +86,15 @@ local function get_interactive()
     _interactive = require("nvim-float.float.interactive")
   end
   return _interactive
+end
+
+---Get the style editor module (lazy-loaded)
+---@return table
+local function get_style_editor()
+  if not _style_editor then
+    _style_editor = require("nvim-float.style_editor")
+  end
+  return _style_editor
 end
 
 -- ============================================================================
@@ -277,6 +287,15 @@ function M.demo()
     width = 50,
     zindex = M.ZINDEX.MODAL,
   })
+end
+
+-- ============================================================================
+-- Style Editor API
+-- ============================================================================
+
+---Show the style editor for customizing highlight groups
+function M.show_style_editor()
+  return get_style_editor().show()
 end
 
 return M
