@@ -21,6 +21,10 @@ local custom_highlights = {}
 ---@type table<string, table>?
 local persisted_overrides = nil
 
+---Track if theme has been initialized
+---@type boolean
+local _initialized = false
+
 -- ============================================================================
 -- Setup
 -- ============================================================================
@@ -61,6 +65,14 @@ function M.setup(opts)
       vim.api.nvim_set_hl(0, name, def)
     end
   end
+
+  _initialized = true
+end
+
+---Check if theme has been initialized
+---@return boolean
+function M.is_initialized()
+  return _initialized
 end
 
 -- ============================================================================

@@ -1,16 +1,34 @@
 ---@module nvim-float.config
----Configuration management for nvim-float
+---@brief Configuration management for nvim-float
+---
+---This module handles all configuration for nvim-float.
+---Users can pass options to setup() which will be merged with defaults.
 
+-- ============================================================================
+-- Type Definitions (for LuaLS autocomplete)
+-- ============================================================================
+
+---User-facing configuration schema (all fields optional)
 ---@class NvimFloatConfig
----@field debug boolean Enable debug logging (default: false)
----@field theme NvimFloatThemeConfig? Theme configuration overrides
----@field defaults NvimFloatDefaults? Default values for float windows
+---@field debug? boolean Enable debug logging (default: false)
+---@field theme? NvimFloatThemeConfig Theme configuration overrides
+---@field defaults? NvimFloatDefaults Default values for float windows
 
+---Default values for float windows
 ---@class NvimFloatDefaults
----@field border "none"|"single"|"double"|"rounded"|"solid"|"shadow"|table? Default border style
----@field title_pos "left"|"center"|"right"? Default title position
----@field winblend number? Default window transparency (0-100)
----@field zindex number? Default z-index for windows
+---@field border? "none"|"single"|"double"|"rounded"|"solid"|"shadow"|string[] Default border style
+---@field title_pos? "left"|"center"|"right" Default title position
+---@field winblend? integer Default window transparency (0-100)
+---@field zindex? integer Default z-index for windows
+
+---Theme configuration options
+---@class NvimFloatThemeConfig
+---@field link_to_existing? boolean Link to existing Neovim highlight groups (default: true)
+---@field override? table<string, vim.api.keyset.highlight> Custom highlight overrides by group name
+
+-- ============================================================================
+-- Module
+-- ============================================================================
 
 local M = {}
 
