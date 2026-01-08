@@ -44,7 +44,7 @@ end
 ---Add a styled line (entire line has one style)
 ---@param cb ContentBuilder
 ---@param text string Line text
----@param style string Style name from STYLE_MAPPINGS
+---@param style string Style name from STYLE_MAPPINGS, or direct highlight group name
 ---@param opts? { track?: string|table } Optional tracking
 ---@return ContentBuilder self For chaining
 function M.styled(cb, text, style, opts)
@@ -52,12 +52,23 @@ function M.styled(cb, text, style, opts)
     text = text or "",
     highlights = {},
   }
-  if style and Styles.get(style) then
-    table.insert(line.highlights, {
-      col_start = 0,
-      col_end = #text,
-      style = style,
-    })
+  if style then
+    local mapped_hl = Styles.get(style)
+    if mapped_hl then
+      -- Registered style - use style name (will be mapped in build_highlights)
+      table.insert(line.highlights, {
+        col_start = 0,
+        col_end = #text,
+        style = style,
+      })
+    else
+      -- Not a registered style - assume it's a direct highlight group name
+      table.insert(line.highlights, {
+        col_start = 0,
+        col_end = #text,
+        hl_group = style,
+      })
+    end
   end
   table.insert(cb._lines, line)
 
@@ -229,12 +240,23 @@ function M.spans(cb, spans)
         col_end = pos + #span_text,
         hl_group = span.hl_group,
       })
-    elseif span.style and Styles.get(span.style) then
-      table.insert(highlights, {
-        col_start = pos,
-        col_end = pos + #span_text,
-        style = span.style,
-      })
+    elseif span.style then
+      local mapped_hl = Styles.get(span.style)
+      if mapped_hl then
+        -- Registered style
+        table.insert(highlights, {
+          col_start = pos,
+          col_end = pos + #span_text,
+          style = span.style,
+        })
+      else
+        -- Not registered - use as direct highlight group
+        table.insert(highlights, {
+          col_start = pos,
+          col_end = pos + #span_text,
+          hl_group = span.style,
+        })
+      end
     end
 
     -- Collect tracking info
