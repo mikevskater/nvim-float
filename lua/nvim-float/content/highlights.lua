@@ -67,10 +67,27 @@ function M.apply_to_buffer(cb, bufnr, ns_id)
   -- Clear existing highlights in namespace
   vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
 
+  -- Build lines for fallback col_end calculation
+  local lines = M.build_lines(cb)
+
   -- Apply new highlights
   local highlights = M.build_highlights(cb)
   for _, hl in ipairs(highlights) do
-    pcall(vim.api.nvim_buf_add_highlight, bufnr, ns_id, hl.hl_group, hl.line, hl.col_start, hl.col_end)
+    local col_end = hl.col_end
+
+    -- Ensure col_end is valid (not nil/0) to prevent highlighting to end of line
+    if not col_end or col_end <= 0 then
+      -- Fallback to line length
+      local line_text = lines[hl.line + 1]
+      if line_text then
+        col_end = #line_text
+      end
+    end
+
+    -- Only apply if we have valid bounds
+    if col_end and col_end > hl.col_start then
+      pcall(vim.api.nvim_buf_add_highlight, bufnr, ns_id, hl.hl_group, hl.line, hl.col_start, col_end)
+    end
   end
 
   return ns_id
@@ -173,7 +190,19 @@ function M.render_to_buffer_chunked(cb, bufnr, ns_id, opts)
       local line_0idx = hl.line
       local line_1idx = line_0idx + 1
       if line_1idx >= current_idx and line_1idx <= end_idx then
-        pcall(vim.api.nvim_buf_add_highlight, bufnr, ns_id, hl.hl_group, line_0idx, hl.col_start, hl.col_end)
+        local col_end = hl.col_end
+
+        -- Ensure col_end is valid (not nil/0) to prevent highlighting to end of line
+        if not col_end or col_end <= 0 then
+          local line_text = lines[line_1idx]
+          if line_text then
+            col_end = #line_text
+          end
+        end
+
+        if col_end and col_end > hl.col_start then
+          pcall(vim.api.nvim_buf_add_highlight, bufnr, ns_id, hl.hl_group, line_0idx, hl.col_start, col_end)
+        end
       end
     end
 

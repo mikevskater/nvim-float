@@ -153,15 +153,24 @@ function UiFloatInteractive.render(state)
     for _, hl in ipairs(highlights) do
       -- Support both array format {line, col_start, col_end, hl_group}
       -- and named format {line=, col_start=, col_end=, hl_group=} from ContentBuilder
-      local line = hl.line or hl[1]
+      local line_idx = hl.line or hl[1]
       local col_start = hl.col_start or hl[2]
       local col_end = hl.col_end or hl[3]
       local hl_group = hl.hl_group or hl[4]
 
-      if line and col_start and hl_group then
+      -- Ensure col_end is valid (not nil/0) to prevent highlighting to end of line
+      if not col_end or col_end <= 0 then
+        -- Fallback to line length if available
+        local line_text = lines[line_idx + 1]
+        if line_text then
+          col_end = #line_text
+        end
+      end
+
+      if line_idx and col_start and col_end and col_end > col_start and hl_group then
         vim.api.nvim_buf_add_highlight(
           state.bufnr, HIGHLIGHT_NS,
-          hl_group, line, col_start, col_end or -1
+          hl_group, line_idx, col_start, col_end
         )
       end
     end
