@@ -92,6 +92,42 @@ function M.get_border_chars(style)
   return BORDER_CHARS[style] or BORDER_CHARS.box
 end
 
+---Calculate column positions for cell tracking
+---@param columns table[] Array of { name, width }
+---@param row_num_width number? Width of row number column
+---@param border_style string "box" or "ascii"
+---@return ResultColumnInfo[] column_positions, {start_col: number, end_col: number}? row_num_col
+function M.calculate_column_positions(columns, row_num_width, border_style)
+  local chars = M.get_border_chars(border_style)
+  local positions = {}
+  local current_col = #chars.vertical  -- Start after left border
+
+  -- Row number column (if present)
+  local row_num_col = nil
+  if row_num_width then
+    row_num_col = {
+      start_col = current_col,
+      end_col = current_col + row_num_width + 2,  -- +2 for padding (space before and after)
+    }
+    current_col = row_num_col.end_col + #chars.vertical  -- +border width
+  end
+
+  -- Data columns
+  for i, col in ipairs(columns) do
+    local start_col = current_col
+    local end_col = current_col + col.width + 2  -- +2 for padding
+    table.insert(positions, {
+      index = i,
+      name = col.name or "",
+      start_col = start_col,
+      end_col = end_col,
+    })
+    current_col = end_col + #chars.vertical  -- +border width
+  end
+
+  return positions, row_num_col
+end
+
 ---Wrap text to fit within a maximum width
 ---@param text string The text to wrap
 ---@param max_width number Maximum width per line
@@ -397,11 +433,14 @@ end
 ---@param color_mode string "datatype" | "uniform" | "none"
 ---@param border_style string "box" or "ascii"
 ---@param highlight_null boolean Whether to highlight NULL values
----@param row_number number? Row number to display
+---@param row_number number? Row number to display (also used as row index for cell tracking)
 ---@param row_num_width number? Width of row number column
 ---@return ContentBuilder self
 function M.result_multiline_data_row(cb, cell_lines, color_mode, border_style, highlight_null, row_number, row_num_width)
   local chars = M.get_border_chars(border_style)
+
+  -- Track row start line (1-based)
+  local row_start_line = #cb._lines + 1
 
   -- Calculate max lines across all cells
   local max_lines = 1
@@ -473,6 +512,16 @@ function M.result_multiline_data_row(cb, cell_lines, color_mode, border_style, h
     table.insert(cb._lines, line)
   end
 
+  -- Update cell map if tracking is active and row_number is provided
+  if cb._result_cell_map and row_number then
+    local row_end_line = #cb._lines
+    table.insert(cb._result_cell_map.data_rows, {
+      index = row_number,
+      start_line = row_start_line,
+      end_line = row_end_line,
+    })
+  end
+
   return cb
 end
 
@@ -490,6 +539,9 @@ function M.result_header_row_with_rownum(cb, columns, border_style, row_num_widt
   local chars = M.get_border_chars(border_style)
   local line = { text = "", highlights = {} }
   local pos = 0
+
+  -- Track header line position (1-based)
+  local header_line_num = #cb._lines + 1
 
   line.text = chars.vertical
   pos = #chars.vertical
@@ -525,6 +577,18 @@ function M.result_header_row_with_rownum(cb, columns, border_style, row_num_widt
   end
 
   table.insert(cb._lines, line)
+
+  -- Update cell map if tracking is active
+  if cb._result_cell_map then
+    local col_positions, row_num_col = M.calculate_column_positions(columns, row_num_width, border_style)
+    cb._result_cell_map.columns = col_positions
+    cb._result_cell_map.row_num_column = row_num_col
+    cb._result_cell_map.header_lines = {
+      start_line = header_line_num,
+      end_line = header_line_num,
+    }
+  end
+
   return cb
 end
 

@@ -10,7 +10,25 @@
 local Elements = require("nvim-float.elements")
 local Styles = require("nvim-float.theme.styles")
 
+---@class ResultCellMap
+---@field columns ResultColumnInfo[] Column boundary info (ordered by display position)
+---@field header_lines {start_line: number, end_line: number}? Buffer lines for header row
+---@field data_rows ResultRowInfo[] Data row boundary info (ordered by row index)
+---@field row_num_column {start_col: number, end_col: number}? Row number column bounds (nil if not shown)
+
+---@class ResultColumnInfo
+---@field index number 1-based column index
+---@field name string Column name
+---@field start_col number 0-based start column in buffer
+---@field end_col number 0-based end column in buffer (exclusive)
+
+---@class ResultRowInfo
+---@field index number 1-based data row index
+---@field start_line number 1-based start line in buffer
+---@field end_line number 1-based end line in buffer (for multi-line cells)
+
 ---@class ContentBuilder
+---@field _result_cell_map ResultCellMap? Cell map for current result table
 ---Build styled content for floating windows using theme colors
 local ContentBuilder = {}
 ContentBuilder.__index = ContentBuilder
@@ -87,6 +105,7 @@ function ContentBuilder:clear()
   self._multi_dropdowns = {}
   self._multi_dropdown_order = {}
   self._registry:clear()
+  self._result_cell_map = nil
   return self
 end
 
@@ -94,6 +113,147 @@ end
 ---@return number count Current number of lines
 function ContentBuilder:line_count()
   return #self._lines
+end
+
+-- ============================================================================
+-- Result Cell Tracking
+-- ============================================================================
+
+---Start tracking a new result table (call before rendering)
+---@return ContentBuilder self For chaining
+function ContentBuilder:begin_result_table()
+  self._result_cell_map = {
+    columns = {},
+    header_lines = nil,
+    data_rows = {},
+    row_num_column = nil,
+  }
+  return self
+end
+
+---Get the cell map for the most recently rendered result table
+---@return ResultCellMap?
+function ContentBuilder:get_result_cell_map()
+  return self._result_cell_map
+end
+
+---Find which cell (if any) is at the given buffer position
+---@param line number 1-based line number
+---@param col number 0-based column number
+---@return {row: number?, col: number?, is_header: boolean, is_row_num: boolean}?
+function ContentBuilder:get_cell_at_position(line, col)
+  local map = self._result_cell_map
+  if not map then return nil end
+
+  -- Check if in row number column
+  local is_row_num = false
+  if map.row_num_column then
+    is_row_num = col >= map.row_num_column.start_col and col < map.row_num_column.end_col
+  end
+
+  -- Check if in header
+  if map.header_lines and line >= map.header_lines.start_line and line <= map.header_lines.end_line then
+    -- Find which column
+    for _, col_info in ipairs(map.columns) do
+      if col >= col_info.start_col and col < col_info.end_col then
+        return { row = nil, col = col_info.index, is_header = true, is_row_num = is_row_num }
+      end
+    end
+    if is_row_num then
+      return { row = nil, col = nil, is_header = true, is_row_num = true }
+    end
+    return nil
+  end
+
+  -- Check data rows
+  for _, row_info in ipairs(map.data_rows) do
+    if line >= row_info.start_line and line <= row_info.end_line then
+      -- Find which column
+      for _, col_info in ipairs(map.columns) do
+        if col >= col_info.start_col and col < col_info.end_col then
+          return { row = row_info.index, col = col_info.index, is_header = false, is_row_num = is_row_num }
+        end
+      end
+      if is_row_num then
+        return { row = row_info.index, col = nil, is_header = false, is_row_num = true }
+      end
+      return nil
+    end
+  end
+
+  return nil
+end
+
+---Get all cells within a rectangular selection
+---@param start_line number 1-based start line
+---@param start_col number 0-based start column
+---@param end_line number 1-based end line
+---@param end_col number 0-based end column
+---@return {rows: number[], cols: number[], includes_header: boolean}?
+function ContentBuilder:get_cells_in_range(start_line, start_col, end_line, end_col)
+  local map = self._result_cell_map
+  if not map then return nil end
+
+  -- Normalize range (start <= end)
+  if start_line > end_line then start_line, end_line = end_line, start_line end
+  if start_col > end_col then start_col, end_col = end_col, start_col end
+
+  local result = {
+    rows = {},
+    cols = {},
+    includes_header = false,
+  }
+
+  -- Check if row number column is in range (selects all columns)
+  local row_num_selected = false
+  if map.row_num_column then
+    row_num_selected = start_col < map.row_num_column.end_col and end_col >= map.row_num_column.start_col
+  end
+
+  -- Find columns in range
+  local cols_set = {}
+  if row_num_selected then
+    -- Row number selected = all columns
+    for _, col_info in ipairs(map.columns) do
+      cols_set[col_info.index] = true
+    end
+  else
+    for _, col_info in ipairs(map.columns) do
+      -- Check if column overlaps with selection
+      if start_col < col_info.end_col and end_col >= col_info.start_col then
+        cols_set[col_info.index] = true
+      end
+    end
+  end
+
+  -- Convert to sorted array
+  for col_idx in pairs(cols_set) do
+    table.insert(result.cols, col_idx)
+  end
+  table.sort(result.cols)
+
+  -- Check header
+  if map.header_lines then
+    if start_line <= map.header_lines.end_line and end_line >= map.header_lines.start_line then
+      result.includes_header = true
+    end
+  end
+
+  -- Find rows in range
+  local rows_set = {}
+  for _, row_info in ipairs(map.data_rows) do
+    if start_line <= row_info.end_line and end_line >= row_info.start_line then
+      rows_set[row_info.index] = true
+    end
+  end
+
+  -- Convert to sorted array
+  for row_idx in pairs(rows_set) do
+    table.insert(result.rows, row_idx)
+  end
+  table.sort(result.rows)
+
+  return result
 end
 
 -- ============================================================================
@@ -254,6 +414,7 @@ ContentBuilder.datatype_to_style = function(datatype) return get_results().datat
 ContentBuilder.get_border_chars = function(style) return get_results().get_border_chars(style) end
 ContentBuilder.wrap_text = function(text, max_width, mode, preserve_newlines) return get_results().wrap_text(text, max_width, mode, preserve_newlines) end
 ContentBuilder.build_row_separator_with_rownum = function(columns, border_style, row_num_width) return get_results().build_row_separator_with_rownum(columns, border_style, row_num_width) end
+ContentBuilder.calculate_column_positions = function(columns, row_num_width, border_style) return get_results().calculate_column_positions(columns, row_num_width, border_style) end
 
 -- Instance methods
 function ContentBuilder:result_header_row(columns, border_style) return get_results().result_header_row(self, columns, border_style) end
