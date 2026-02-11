@@ -147,6 +147,9 @@ function Dialogs.show_controls_popup(UiFloat, controls)
     return
   end
 
+  -- Track the parent window to restore focus when popup closes
+  local parent_winid = vim.api.nvim_get_current_win()
+
   local ContentBuilder = require('nvim-float.content')
   local cb = ContentBuilder.new()
 
@@ -186,6 +189,14 @@ function Dialogs.show_controls_popup(UiFloat, controls)
     max_width = 60,
     border = "rounded",
     zindex = UiFloat.ZINDEX.MODAL,
+    on_close = function()
+      -- Restore focus to parent window if it still exists
+      vim.schedule(function()
+        if parent_winid and vim.api.nvim_win_is_valid(parent_winid) then
+          vim.api.nvim_set_current_win(parent_winid)
+        end
+      end)
+    end,
   })
 end
 

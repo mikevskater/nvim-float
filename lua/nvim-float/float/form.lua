@@ -71,6 +71,7 @@ function UiFloatForm.create(config)
     ["s"] = function() UiFloatForm.submit() end,
     ["<C-s>"] = function() UiFloatForm.submit() end,
     ["q"] = function() UiFloatForm.cancel() end,
+    ["<Esc>"] = function() UiFloatForm.cancel() end,
     ["<Space>"] = function() UiFloatForm.toggle_checkbox_at_cursor() end,
   }
 
