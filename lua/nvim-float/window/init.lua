@@ -6,7 +6,7 @@ local Geometry = require("nvim-float.window.geometry")
 local Elements = require("nvim-float.window.elements")
 
 -- Lazy-load heavy dependencies
-local _scrollbar, _dialogs, _multipanel
+local _scrollbar, _dialogs, _multipanel, _container_manager
 
 local function get_scrollbar()
   if not _scrollbar then _scrollbar = require("nvim-float.float.scrollbar") end
@@ -21,6 +21,11 @@ end
 local function get_multipanel()
   if not _multipanel then _multipanel = require("nvim-float.float.multipanel") end
   return _multipanel
+end
+
+local function get_container_manager()
+  if not _container_manager then _container_manager = require("nvim-float.container.manager") end
+  return _container_manager
 end
 
 ---@class FloatWindow
@@ -79,6 +84,8 @@ function UiFloat.create(lines, config)
     _hovered_element = nil,
     _element_hover_ns = nil,
     _element_tracking_enabled = false,
+    _container_manager = nil,
+    _embedded_input_manager = nil,
   }, FloatWindow)
 
   -- Apply defaults
@@ -121,6 +128,11 @@ function UiFloat.create(lines, config)
     if config.enable_inputs then
       instance:_setup_input_manager(content_builder)
     end
+
+    -- Create embedded containers from content builder
+    if content_builder.get_containers and content_builder:get_containers() then
+      instance:_create_containers_from_builder(content_builder)
+    end
   end
 
   return instance
@@ -161,6 +173,11 @@ function FloatWindow:_open_window(width, height, row, col)
     focusable = self.config.focusable,
     zindex = self.config.zindex,
   }
+
+  -- Support relative='win' by passing the parent window ID
+  if self.config.relative == "win" and self.config.win then
+    win_config.win = self.config.win
+  end
 
   if self.config.title then
     win_config.title = string.format(" %s ", self.config.title)
@@ -252,6 +269,14 @@ function FloatWindow:is_valid()
 end
 
 function FloatWindow:close()
+  -- Close embedded containers first
+  if self._container_manager then
+    self._container_manager:close_all()
+  end
+  if self._embedded_input_manager then
+    self._embedded_input_manager:close_all()
+  end
+
   get_scrollbar().close(self)
 
   if self:is_valid() then
@@ -491,6 +516,18 @@ function FloatWindow:render()
   if self.config.scrollbar then
     get_scrollbar().update(self)
   end
+
+  -- Recreate embedded containers
+  if cb.get_containers and cb:get_containers() then
+    -- Close existing containers before recreating
+    if self._container_manager then
+      self._container_manager:close_all()
+    end
+    if self._embedded_input_manager then
+      self._embedded_input_manager:close_all()
+    end
+    self:_create_containers_from_builder(cb)
+  end
 end
 
 -- ============================================================================
@@ -716,6 +753,196 @@ end
 
 function UiFloat._show_controls_popup(controls)
   get_dialogs().show_controls_popup(UiFloat, controls)
+end
+
+-- ============================================================================
+-- Container Support
+-- ============================================================================
+
+---Get or lazily create the container manager
+---@return ContainerManager
+function FloatWindow:_get_container_manager()
+  if not self._container_manager then
+    self._container_manager = get_container_manager().new(self)
+  end
+  return self._container_manager
+end
+
+---Add an embedded container to this window
+---@param config EmbeddedContainerConfig
+---@return EmbeddedContainer
+function FloatWindow:add_container(config)
+  config.parent_winid = self.winid
+  config.parent_float = self
+  return self:_get_container_manager():add(config)
+end
+
+---Remove an embedded container by name
+---@param name string
+function FloatWindow:remove_container(name)
+  if self._container_manager then
+    self._container_manager:remove(name)
+  end
+end
+
+---Get an embedded container by name
+---@param name string
+---@return EmbeddedContainer?
+function FloatWindow:get_container(name)
+  if self._container_manager then
+    return self._container_manager:get(name)
+  end
+  return nil
+end
+
+---Focus a container by name (transfer window focus to child)
+---@param name string
+---@return boolean success
+function FloatWindow:focus_container(name)
+  if self._container_manager then
+    return self._container_manager:focus(name)
+  end
+  return false
+end
+
+---Get the embedded input manager (lazily created)
+---@return EmbeddedInputManager
+function FloatWindow:_get_embedded_input_manager()
+  if not self._embedded_input_manager then
+    local EmbeddedInputManager = require("nvim-float.container.input_manager")
+    self._embedded_input_manager = EmbeddedInputManager.new(self)
+  end
+  return self._embedded_input_manager
+end
+
+---Get all embedded input values
+---@return table<string, string|string[]>
+function FloatWindow:get_all_embedded_values()
+  if self._embedded_input_manager then
+    return self._embedded_input_manager:get_all_values()
+  end
+  return {}
+end
+
+---Get a specific embedded input value
+---@param key string
+---@return string|string[]|nil
+function FloatWindow:get_embedded_value(key)
+  if self._embedded_input_manager then
+    return self._embedded_input_manager:get_value(key)
+  end
+  return nil
+end
+
+---Set a specific embedded input value
+---@param key string
+---@param value string|string[]
+function FloatWindow:set_embedded_value(key, value)
+  if self._embedded_input_manager then
+    self._embedded_input_manager:set_value(key, value)
+  end
+end
+
+---Compute the col position for a container within this parent window.
+---If def.col is explicit, use it. Otherwise auto-center based on parent width.
+---@param def table Container definition from ContentBuilder
+---@param visual_width number The container's total visual width (border included)
+---@return number col 0-indexed column offset within parent
+function FloatWindow:_resolve_container_col(def, visual_width)
+  if def.col then
+    return def.col
+  end
+  -- Auto-center: border is inside the specified width, so visual_width IS the width
+  local col = math.floor((self._win_width - visual_width) / 2)
+  return math.max(0, col)
+end
+
+---Create containers from content builder definitions
+---@param cb ContentBuilder
+function FloatWindow:_create_containers_from_builder(cb)
+  local containers = cb:get_containers()
+  if not containers then return end
+
+  for name, def in pairs(containers) do
+    if def.type == "container" then
+      -- User-specified width/height is the total visual footprint.
+      -- Border is inside: subtract it to get the content area for nvim_open_win.
+      local visual_width = def.width or self._win_width
+      local visual_height = def.height
+      local border_rows = def.border_rows or 0
+      local border_cols = def.border_cols or 0
+      local content_width = math.max(1, visual_width - border_cols)
+      local content_height = math.max(1, visual_height - border_rows)
+      local col = self:_resolve_container_col(def, visual_width)
+      self:add_container({
+        name = name,
+        row = def.row,
+        col = col,
+        width = content_width,
+        height = content_height,
+        parent_winid = self.winid,
+        parent_float = self,
+        zindex_offset = def.zindex_offset,
+        border = def.border,
+        focusable = def.focusable,
+        scrollbar = def.scrollbar,
+        content_builder = def.content_builder,
+        on_focus = def.on_focus,
+        on_blur = def.on_blur,
+      })
+    elseif def.type == "embedded_input" then
+      local width = def.width or self._win_width
+      local col = self:_resolve_container_col(def, width)
+      self:_get_embedded_input_manager():add_input({
+        key = name,
+        row = def.row,
+        col = col,
+        width = width,
+        parent_winid = self.winid,
+        parent_float = self,
+        zindex_offset = def.zindex_offset,
+        placeholder = def.placeholder,
+        value = def.value,
+        on_change = def.on_change,
+        on_submit = def.on_submit,
+      })
+    elseif def.type == "embedded_dropdown" then
+      local width = def.width or self._win_width
+      local col = self:_resolve_container_col(def, width)
+      self:_get_embedded_input_manager():add_dropdown({
+        key = name,
+        row = def.row,
+        col = col,
+        width = width,
+        parent_winid = self.winid,
+        parent_float = self,
+        zindex_offset = def.zindex_offset,
+        options = def.options,
+        selected = def.selected,
+        placeholder = def.placeholder,
+        max_height = def.max_height,
+        on_change = def.on_change,
+      })
+    elseif def.type == "embedded_multi_dropdown" then
+      local width = def.width or self._win_width
+      local col = self:_resolve_container_col(def, width)
+      self:_get_embedded_input_manager():add_multi_dropdown({
+        key = name,
+        row = def.row,
+        col = col,
+        width = width,
+        parent_winid = self.winid,
+        parent_float = self,
+        zindex_offset = def.zindex_offset,
+        options = def.options,
+        selected = def.selected,
+        placeholder = def.placeholder,
+        max_height = def.max_height,
+        display_mode = def.display_mode,
+        on_change = def.on_change,
+      })
+    end
+  end
 end
 
 -- ============================================================================

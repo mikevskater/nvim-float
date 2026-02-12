@@ -52,6 +52,7 @@ local M = {}
 ---@field enable_inputs boolean? Enable input field mode for the window
 ---@field scrollbar boolean? Show scrollbar when content exceeds window height (default: true)
 ---@field controls ControlsDefinition[]? Controls/keybindings to show in "?" popup
+---@field win number? Parent window ID for relative='win' positioning
 
 -- ============================================================================
 -- Z-Index Layers

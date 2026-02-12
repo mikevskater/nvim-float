@@ -150,6 +150,11 @@ function M.activate_field(im, key)
     -- Lazy-load multi-dropdown module
     local MultiDropdown = require("nvim-float.input.multi_dropdown")
     MultiDropdown.open(im, key)
+  elseif field_info.type == "container" or field_info.type == "embedded_input" then
+    -- Container-based fields: transfer focus to child window
+    -- The parent FloatWindow's container/input manager handles this
+    -- This path is for forward compatibility when container fields are
+    -- registered in the traditional InputManager field order
   end
 end
 

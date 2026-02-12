@@ -127,6 +127,30 @@ local TYPE_DEFINITIONS = {
       -- This is a placeholder for the element type
     end,
   },
+
+  -- Container element (embedded child window)
+  container = {
+    name = "container",
+    default_style = nil,
+    hover_style = nil,
+    interactive = true,
+    on_interact = function(element)
+      -- Container interaction is handled by ContainerManager
+      -- Focuses the child window when activated
+    end,
+  },
+
+  -- Embedded input element (container-based text input)
+  embedded_input = {
+    name = "embedded_input",
+    default_style = "input",
+    hover_style = "input_active",
+    interactive = true,
+    on_interact = function(element)
+      -- Embedded input interaction is handled by EmbeddedInputManager
+      -- Focuses the child input window when activated
+    end,
+  },
 }
 
 ---Custom element types registered by plugins

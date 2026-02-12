@@ -33,6 +33,8 @@ local ElementType = {
   INPUT = "input",
   DROPDOWN = "dropdown",
   MULTI_DROPDOWN = "multi_dropdown",
+  CONTAINER = "container",
+  EMBEDDED_INPUT = "embedded_input",
 }
 
 ---Create a new TrackedElement
@@ -219,6 +221,8 @@ function TrackedElement:is_interactive()
     [ElementType.INPUT] = true,
     [ElementType.DROPDOWN] = true,
     [ElementType.MULTI_DROPDOWN] = true,
+    [ElementType.CONTAINER] = true,
+    [ElementType.EMBEDDED_INPUT] = true,
   }
 
   return interactive_types[self.type] or false

@@ -106,6 +106,7 @@ function ContentBuilder:clear()
   self._multi_dropdown_order = {}
   self._registry:clear()
   self._result_cell_map = nil
+  self._containers = nil
   return self
 end
 
@@ -431,5 +432,193 @@ function ContentBuilder:result_separator_with_rownum(columns, border_style, row_
 function ContentBuilder:result_bottom_border_with_rownum(columns, border_style, row_num_width) return get_results().result_bottom_border_with_rownum(self, columns, border_style, row_num_width) end
 function ContentBuilder:result_row_separator_with_rownum(columns, border_style, row_num_width) return get_results().result_row_separator_with_rownum(self, columns, border_style, row_num_width) end
 function ContentBuilder:add_cached_row_separator(separator_text) return get_results().add_cached_row_separator(self, separator_text) end
+
+-- ============================================================================
+-- Container Methods
+-- ============================================================================
+
+---Compute how many extra rows/cols a border adds
+---@param border string|table|nil Border style
+---@return number extra_rows Total extra rows (top + bottom)
+---@return number extra_cols Total extra cols (left + right)
+local function border_size(border)
+  if not border or border == "none" then
+    return 0, 0
+  end
+  -- All named borders ("single", "double", "rounded", "solid", "shadow")
+  -- and table borders add 1 on each side
+  return 2, 2
+end
+
+---Reserve space for an embedded container and record its definition
+---The container will be created as a child window when the ContentBuilder is
+---applied to a FloatWindow via UiFloat.create() or FloatWindow:render().
+---@param name string Unique container name
+---@param opts { height: number, width?: number, col?: number, border?: string|table, focusable?: boolean, scrollbar?: boolean, content_builder?: ContentBuilder, on_focus?: fun(), on_blur?: fun(), zindex_offset?: number }
+---@return ContentBuilder self For chaining
+function ContentBuilder:container(name, opts)
+  opts = opts or {}
+  if not self._containers then
+    self._containers = {}
+  end
+
+  -- Compute border size (border is INSIDE the specified dimensions)
+  local border_rows, border_cols = border_size(opts.border)
+
+  -- Record the start row (0-indexed line where container will be positioned)
+  local start_row = #self._lines
+
+  -- Reserve exactly opts.height lines - border is contained within
+  for _ = 1, opts.height do
+    table.insert(self._lines, { text = "", highlights = {} })
+  end
+
+  -- Store the container definition
+  -- col = nil means "auto-center within parent"
+  self._containers[name] = {
+    type = "container",
+    row = start_row,
+    col = opts.col, -- nil = auto-center, number = explicit offset
+    width = opts.width,
+    height = opts.height,
+    border = opts.border,
+    border_rows = border_rows,
+    border_cols = border_cols,
+    focusable = opts.focusable,
+    scrollbar = opts.scrollbar,
+    content_builder = opts.content_builder,
+    on_focus = opts.on_focus,
+    on_blur = opts.on_blur,
+    zindex_offset = opts.zindex_offset,
+  }
+
+  return self
+end
+
+---Reserve space for an embedded text input and record its definition
+---@param key string Unique input key
+---@param opts { width: number, col?: number, placeholder?: string, value?: string, label?: string, on_change?: fun(key: string, value: string), on_submit?: fun(key: string, value: string), zindex_offset?: number }
+---@return ContentBuilder self For chaining
+function ContentBuilder:embedded_input(key, opts)
+  opts = opts or {}
+  if not self._containers then
+    self._containers = {}
+  end
+
+  local start_row = #self._lines
+
+  -- If a label is provided, add a label line before the input
+  if opts.label then
+    get_lines().styled(self, opts.label, "label")
+    start_row = #self._lines
+  end
+
+  -- Insert 1 blank placeholder line for the input
+  table.insert(self._lines, { text = "", highlights = {} })
+
+  self._containers[key] = {
+    type = "embedded_input",
+    row = start_row,
+    col = opts.col, -- nil = auto-center
+    width = opts.width,
+    placeholder = opts.placeholder,
+    value = opts.value,
+    on_change = opts.on_change,
+    on_submit = opts.on_submit,
+    zindex_offset = opts.zindex_offset,
+  }
+
+  return self
+end
+
+---Reserve space for an embedded dropdown and record its definition
+---@param key string Unique dropdown key
+---@param opts { width: number, col?: number, options: table[], selected?: string, label?: string, placeholder?: string, max_height?: number, on_change?: fun(key: string, value: string), zindex_offset?: number }
+---@return ContentBuilder self For chaining
+function ContentBuilder:embedded_dropdown(key, opts)
+  opts = opts or {}
+  if not self._containers then
+    self._containers = {}
+  end
+
+  local start_row = #self._lines
+
+  if opts.label then
+    get_lines().styled(self, opts.label, "label")
+    start_row = #self._lines
+  end
+
+  -- Insert 1 blank placeholder line for the dropdown display
+  table.insert(self._lines, { text = "", highlights = {} })
+
+  self._containers[key] = {
+    type = "embedded_dropdown",
+    row = start_row,
+    col = opts.col, -- nil = auto-center
+    width = opts.width,
+    options = opts.options,
+    selected = opts.selected,
+    placeholder = opts.placeholder,
+    max_height = opts.max_height,
+    on_change = opts.on_change,
+    zindex_offset = opts.zindex_offset,
+  }
+
+  return self
+end
+
+---Reserve space for an embedded multi-dropdown and record its definition
+---@param key string Unique multi-dropdown key
+---@param opts { width: number, col?: number, options: table[], selected?: string[], label?: string, placeholder?: string, max_height?: number, display_mode?: "count"|"list", on_change?: fun(key: string, values: string[]), zindex_offset?: number }
+---@return ContentBuilder self For chaining
+function ContentBuilder:embedded_multi_dropdown(key, opts)
+  opts = opts or {}
+  if not self._containers then
+    self._containers = {}
+  end
+
+  local start_row = #self._lines
+
+  if opts.label then
+    get_lines().styled(self, opts.label, "label")
+    start_row = #self._lines
+  end
+
+  -- Insert 1 blank placeholder line for the multi-dropdown display
+  table.insert(self._lines, { text = "", highlights = {} })
+
+  self._containers[key] = {
+    type = "embedded_multi_dropdown",
+    row = start_row,
+    col = opts.col, -- nil = auto-center
+    width = opts.width,
+    options = opts.options,
+    selected = opts.selected,
+    placeholder = opts.placeholder,
+    max_height = opts.max_height,
+    display_mode = opts.display_mode,
+    on_change = opts.on_change,
+    zindex_offset = opts.zindex_offset,
+  }
+
+  return self
+end
+
+---Get all container definitions (used by FloatWindow to create child windows)
+---@return table<string, table>? containers Map of name -> container definition, or nil
+function ContentBuilder:get_containers()
+  if not self._containers or next(self._containers) == nil then
+    return nil
+  end
+  return self._containers
+end
+
+---Get a specific container definition
+---@param name string Container name
+---@return table? definition
+function ContentBuilder:get_container(name)
+  if not self._containers then return nil end
+  return self._containers[name]
+end
 
 return ContentBuilder
