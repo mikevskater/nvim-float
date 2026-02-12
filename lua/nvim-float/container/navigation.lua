@@ -322,13 +322,21 @@ local function enter_container(fw, region, cursor_row, cursor_col)
 
   -- Position cursor inside the container before focusing
   if region.container:is_valid() then
+    local winid = region.container.winid
     local line_count = vim.api.nvim_buf_line_count(region.container.bufnr)
+
+    -- Map visual offset to buffer line within visible range
+    local visible_top = vim.fn.line('w0', winid)
+    if visible_top > 1 then
+      cursor_row = visible_top + (cursor_row - 1)
+    end
+
     cursor_row = math.max(1, math.min(cursor_row, line_count))
     local line = vim.api.nvim_buf_get_lines(
       region.container.bufnr, cursor_row - 1, cursor_row, false
     )[1] or ""
     cursor_col = math.max(0, math.min(cursor_col, math.max(0, #line - 1)))
-    vim.api.nvim_win_set_cursor(region.container.winid, { cursor_row, cursor_col })
+    vim.api.nvim_win_set_cursor(winid, { cursor_row, cursor_col })
   end
 
   -- Focus the window
@@ -582,7 +590,8 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
         -- At last row -> exit downward
         local parent_row0 = region.row + region.visual_height  -- row just below bottom border
         local parent_col0 = region.col + region.border_left + ccol0
-        if can_exit_to(fw, regions, parent_row0, parent_col0) then
+        local buf_lines = vim.api.nvim_buf_line_count(fw.bufnr)
+        if parent_row0 >= 0 and parent_row0 < buf_lines then
           exit_to(parent_row0, parent_col0)
         end
       else
@@ -604,7 +613,8 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
         -- At first row -> exit upward
         local parent_row0 = region.row - 1  -- row just above top border
         local parent_col0 = region.col + region.border_left + ccol0
-        if can_exit_to(fw, regions, parent_row0, parent_col0) then
+        local buf_lines = vim.api.nvim_buf_line_count(fw.bufnr)
+        if parent_row0 >= 0 and parent_row0 < buf_lines then
           exit_to(parent_row0, parent_col0)
         end
       else
@@ -625,7 +635,9 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
 
       if ccol0 >= line_end then
         -- At end of line -> exit right
-        local parent_row0 = region.row + region.border_top + (crow1 - 1)
+        local visible_top = vim.fn.line('w0', c.winid)
+        local visual_row = crow1 - visible_top  -- 0-indexed visual offset
+        local parent_row0 = region.row + region.border_top + visual_row
         local parent_col0 = region.col + region.visual_width  -- just past right border
         if can_exit_to(fw, regions, parent_row0, parent_col0) then
           exit_to(parent_row0, parent_col0)
@@ -646,14 +658,29 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
 
       if ccol0 <= 0 then
         -- At col 0 -> exit left
-        local parent_row0 = region.row + region.border_top + (crow1 - 1)
+        local visible_top = vim.fn.line('w0', c.winid)
+        local visual_row = crow1 - visible_top  -- 0-indexed visual offset
+        local parent_row0 = region.row + region.border_top + visual_row
         local parent_col0 = region.col - 1  -- just before left border
-        if can_exit_to(fw, regions, parent_row0, parent_col0) then
+        local buf_lines = vim.api.nvim_buf_line_count(fw.bufnr)
+        if parent_col0 >= 0 and parent_row0 >= 0 and parent_row0 < buf_lines then
           exit_to(parent_row0, parent_col0)
         end
       else
         pcall(vim.api.nvim_win_set_cursor, c.winid, { crow1, ccol0 - 1 })
       end
+    end, opts)
+  end
+
+  -- Close parent UI from container (q/Esc)
+  if fw.config.default_keymaps then
+    vim.keymap.set("n", "q", function()
+      blur_current_container(fw)
+      fw:close()
+    end, opts)
+    vim.keymap.set("n", "<Esc>", function()
+      blur_current_container(fw)
+      fw:close()
     end, opts)
   end
 end

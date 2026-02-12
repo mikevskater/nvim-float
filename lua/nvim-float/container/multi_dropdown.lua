@@ -358,19 +358,17 @@ function EmbeddedMultiDropdown:_setup_list_keymaps()
   local bufnr = self._list_bufnr
   local opts = { buffer = bufnr, noremap = true, silent = true }
 
-  -- Toggle with Space or Enter
+  -- Toggle with Space
   vim.keymap.set('n', '<Space>', function() self:_toggle_at_cursor() end,
     vim.tbl_extend('force', opts, { desc = "Toggle option" }))
-  vim.keymap.set('n', '<CR>', function() self:_toggle_at_cursor() end,
-    vim.tbl_extend('force', opts, { desc = "Toggle option" }))
+
+  -- Submit with Enter
+  vim.keymap.set('n', '<CR>', function() self:_confirm() end,
+    vim.tbl_extend('force', opts, { desc = "Confirm selections" }))
 
   -- Ctrl+A to toggle all
   vim.keymap.set('n', '<C-a>', function() self:_toggle_all() end,
     vim.tbl_extend('force', opts, { desc = "Toggle all" }))
-
-  -- Confirm with Ctrl+Enter or y
-  vim.keymap.set('n', 'y', function() self:_confirm() end,
-    vim.tbl_extend('force', opts, { desc = "Confirm selections" }))
 
   -- Cancel with Escape or q
   vim.keymap.set('n', '<Esc>', function() self:close_list(true) end,

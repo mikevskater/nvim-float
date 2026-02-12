@@ -57,6 +57,9 @@ function EmbeddedDropdown.new(config)
   self._filter_text = ""
   self._filtered_options = vim.deepcopy(self._options)
   self._list_autocmd_group = nil
+  self._filter_winid = nil
+  self._filter_bufnr = nil
+  self._filter_autocmd_group = nil
 
   -- Find initial selected index
   for i, opt in ipairs(self._options) do
@@ -228,6 +231,11 @@ function EmbeddedDropdown:close_list(cancel)
   if not self._list_open then return end
   self._list_open = false
 
+  -- Close filter if open
+  if self._filter_winid and vim.api.nvim_win_is_valid(self._filter_winid) then
+    self:_close_filter(true)
+  end
+
   -- Clean up autocmds
   if self._list_autocmd_group then
     pcall(vim.api.nvim_del_augroup_by_id, self._list_autocmd_group)
@@ -309,11 +317,10 @@ end
 -- Filtering
 -- ============================================================================
 
-function EmbeddedDropdown:_apply_filter(char)
-  if char then
-    self._filter_text = self._filter_text .. char
-  end
-
+---Update filter text and re-render the list
+---@param text string?
+function EmbeddedDropdown:_update_filter(text)
+  self._filter_text = text or ""
   if self._filter_text == "" then
     self._filtered_options = vim.deepcopy(self._options)
   else
@@ -327,33 +334,145 @@ function EmbeddedDropdown:_apply_filter(char)
   end
 
   self:_render_list()
+  self:_resize_list()
+  self:_clamp_list_cursor()
+end
 
-  -- Resize list window
-  if self._list_winid and vim.api.nvim_win_is_valid(self._list_winid) then
-    local new_height = math.min(math.max(#self._filtered_options, 1), self._max_height)
-    vim.api.nvim_win_set_config(self._list_winid, {
-      relative = "win",
-      win = self._container.winid,
-      row = 1,
-      col = 0,
-      width = self._config.width,
-      height = new_height,
-    })
+---Resize list window to fit filtered results
+function EmbeddedDropdown:_resize_list()
+  if not self._list_winid or not vim.api.nvim_win_is_valid(self._list_winid) then return end
+  local new_height = math.min(math.max(#self._filtered_options, 1), self._max_height)
+  vim.api.nvim_win_set_config(self._list_winid, {
+    relative = "win",
+    win = self._container.winid,
+    row = 1,
+    col = 0,
+    width = self._config.width,
+    height = new_height,
+  })
+end
 
-    -- Clamp cursor
-    local line_count = vim.api.nvim_buf_line_count(self._list_bufnr)
-    if line_count > 0 then
-      local cursor = vim.api.nvim_win_get_cursor(self._list_winid)
-      if cursor[1] > line_count then
-        vim.api.nvim_win_set_cursor(self._list_winid, { line_count, 0 })
-      end
+---Clamp list cursor to valid range
+function EmbeddedDropdown:_clamp_list_cursor()
+  if not self._list_winid or not vim.api.nvim_win_is_valid(self._list_winid) then return end
+  if not self._list_bufnr or not vim.api.nvim_buf_is_valid(self._list_bufnr) then return end
+  local line_count = vim.api.nvim_buf_line_count(self._list_bufnr)
+  if line_count > 0 then
+    local cursor = vim.api.nvim_win_get_cursor(self._list_winid)
+    if cursor[1] > line_count then
+      vim.api.nvim_win_set_cursor(self._list_winid, { line_count, 0 })
     end
   end
 end
 
+---Clear filter text and reset list
 function EmbeddedDropdown:_clear_filter()
-  self._filter_text = ""
-  self:_apply_filter()
+  self:_update_filter("")
+end
+
+---Open filter input floating above the list
+function EmbeddedDropdown:_open_filter()
+  if not self._list_winid or not vim.api.nvim_win_is_valid(self._list_winid) then return end
+  if self._filter_winid and vim.api.nvim_win_is_valid(self._filter_winid) then return end
+
+  -- Create filter buffer
+  self._filter_bufnr = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_option_value('buftype', 'nofile', { buf = self._filter_bufnr })
+  vim.api.nvim_set_option_value('bufhidden', 'wipe', { buf = self._filter_bufnr })
+  vim.api.nvim_set_option_value('swapfile', false, { buf = self._filter_bufnr })
+
+  -- Open 1-line window above the list
+  local Config = require("nvim-float.window.config")
+  self._filter_winid = vim.api.nvim_open_win(self._filter_bufnr, true, {
+    relative = "win",
+    win = self._list_winid,
+    row = -2,
+    col = -1,
+    width = self._config.width,
+    height = 1,
+    zindex = Config.ZINDEX.DROPDOWN + 1,
+    border = "rounded",
+    style = "minimal",
+    focusable = true,
+  })
+
+  vim.api.nvim_set_option_value('winhighlight',
+    'Normal:Normal,FloatBorder:NvimFloatBorder',
+    { win = self._filter_winid })
+
+  -- Set placeholder
+  vim.api.nvim_buf_set_lines(self._filter_bufnr, 0, -1, false, { "Type to filter..." })
+
+  -- Setup keymaps on filter buffer
+  local fopts = { buffer = self._filter_bufnr, noremap = true, silent = true }
+
+  -- Normal mode: i or Enter to start typing (clears placeholder)
+  vim.keymap.set('n', 'i', function()
+    vim.api.nvim_buf_set_lines(self._filter_bufnr, 0, -1, false, { "" })
+    vim.cmd('startinsert')
+  end, fopts)
+
+  vim.keymap.set('n', '<CR>', function()
+    vim.api.nvim_buf_set_lines(self._filter_bufnr, 0, -1, false, { "" })
+    vim.cmd('startinsert')
+  end, fopts)
+
+  -- Insert mode: Enter confirms filter and returns to list
+  vim.keymap.set('i', '<CR>', function()
+    vim.cmd('stopinsert')
+    self:_close_filter(false)
+  end, fopts)
+
+  -- Normal mode: Esc closes filter, clears filter text, returns to list
+  vim.keymap.set('n', '<Esc>', function()
+    self:_close_filter(true)
+  end, fopts)
+
+  -- Insert mode: Esc goes to normal mode in filter
+  vim.keymap.set('i', '<Esc>', function()
+    vim.cmd('stopinsert')
+  end, fopts)
+
+  -- Setup autocmds for live filtering
+  self._filter_autocmd_group = vim.api.nvim_create_augroup(
+    "NvimFloatDropdownFilter_" .. self.key, { clear = true })
+
+  vim.api.nvim_create_autocmd({ "TextChangedI", "TextChanged" }, {
+    group = self._filter_autocmd_group,
+    buffer = self._filter_bufnr,
+    callback = function()
+      local lines = vim.api.nvim_buf_get_lines(self._filter_bufnr, 0, 1, false)
+      local text = lines[1] or ""
+      self:_update_filter(text)
+    end,
+  })
+end
+
+---Close the filter input
+---@param clear boolean? If true, reset filter text
+function EmbeddedDropdown:_close_filter(clear)
+  -- Clean up autocmds
+  if self._filter_autocmd_group then
+    pcall(vim.api.nvim_del_augroup_by_id, self._filter_autocmd_group)
+    self._filter_autocmd_group = nil
+  end
+
+  -- Close filter window
+  if self._filter_winid and vim.api.nvim_win_is_valid(self._filter_winid) then
+    vim.api.nvim_win_close(self._filter_winid, true)
+  end
+  self._filter_winid = nil
+  self._filter_bufnr = nil
+
+  -- Reset filter if requested
+  if clear then
+    self:_update_filter("")
+  end
+
+  -- Return focus to list
+  if self._list_winid and vim.api.nvim_win_is_valid(self._list_winid) then
+    vim.api.nvim_set_current_win(self._list_winid)
+  end
 end
 
 -- ============================================================================
@@ -375,7 +494,7 @@ function EmbeddedDropdown:_setup_list_keymaps()
   vim.keymap.set('n', 'q', function() self:close_list(true) end,
     vim.tbl_extend('force', opts, { desc = "Cancel" }))
 
-  -- Navigation (j/k are default, add wrapping)
+  -- Navigation (j/k with wrapping)
   vim.keymap.set('n', 'j', function()
     if not self._list_winid or not vim.api.nvim_win_is_valid(self._list_winid) then return end
     local cursor = vim.api.nvim_win_get_cursor(self._list_winid)
@@ -392,23 +511,9 @@ function EmbeddedDropdown:_setup_list_keymaps()
     vim.api.nvim_win_set_cursor(self._list_winid, { prev_row, 0 })
   end, vim.tbl_extend('force', opts, { desc = "Previous option" }))
 
-  -- Type-to-filter: printable characters
-  for c = 32, 126 do
-    local char = string.char(c)
-    if char ~= ' ' then -- Skip space, it might conflict
-      vim.keymap.set('n', char, function()
-        self:_apply_filter(char)
-      end, { buffer = bufnr, noremap = true, silent = true })
-    end
-  end
-
-  -- Backspace to clear filter
-  vim.keymap.set('n', '<BS>', function()
-    if #self._filter_text > 0 then
-      self._filter_text = self._filter_text:sub(1, -2)
-      self:_apply_filter()
-    end
-  end, vim.tbl_extend('force', opts, { desc = "Clear filter character" }))
+  -- Filter via /
+  vim.keymap.set('n', '/', function() self:_open_filter() end,
+    vim.tbl_extend('force', opts, { desc = "Open filter" }))
 end
 
 -- ============================================================================
