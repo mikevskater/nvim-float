@@ -63,22 +63,28 @@ end
 -- 2. Container Row Padding
 -- ============================================================================
 
----Pad parent buffer rows that overlap container regions with spaces to window width.
+---Pad parent buffer rows that overlap container regions so horizontal movement can reach them.
+---Only pads to the start column of the rightmost container on each row, not full window width.
 ---@param fw FloatWindow
 ---@param regions table[]
 local function pad_container_rows(fw, regions)
   if not fw:is_valid() or #regions == 0 then return end
 
+  -- Build a map: row0 -> max start col needed (rightmost container's LEFT edge)
+  local row_pad_targets = {}
+  for _, region in ipairs(regions) do
+    for r = region.row, region.row + region.visual_height - 1 do
+      row_pad_targets[r] = math.max(row_pad_targets[r] or 0, region.col)
+    end
+  end
+
   vim.api.nvim_set_option_value("modifiable", true, { buf = fw.bufnr })
 
-  for _, region in ipairs(regions) do
-    for r = region.row, region.row + region.height - 1 do
-      local lines = vim.api.nvim_buf_get_lines(fw.bufnr, r, r + 1, false)
-      local line = lines[1] or ""
-      if #line < fw._win_width then
-        local padded = line .. string.rep(" ", fw._win_width - #line)
-        vim.api.nvim_buf_set_lines(fw.bufnr, r, r + 1, false, { padded })
-      end
+  for r, target in pairs(row_pad_targets) do
+    local lines = vim.api.nvim_buf_get_lines(fw.bufnr, r, r + 1, false)
+    local line = lines[1] or ""
+    if #line < target then
+      vim.api.nvim_buf_set_lines(fw.bufnr, r, r + 1, false, { line .. string.rep(" ", target - #line) })
     end
   end
 
@@ -89,11 +95,47 @@ end
 -- 3. Region Map
 -- ============================================================================
 
+---Compute border thickness offsets for a window border config.
+---@param border any Border config (string, table, or nil)
+---@return number top
+---@return number bottom
+---@return number left
+---@return number right
+local function compute_border_offsets(border)
+  if not border or border == "none" or border == "" then
+    return 0, 0, 0, 0
+  end
+  if type(border) == "string" then
+    if border == "shadow" then return 0, 1, 0, 1 end
+    return 1, 1, 1, 1  -- rounded, single, double, solid
+  end
+  if type(border) == "table" then
+    local function has_char(e)
+      if not e then return false end
+      if type(e) == "string" then return e ~= "" end
+      if type(e) == "table" then return e[1] and e[1] ~= "" end
+      return false
+    end
+    return
+      has_char(border[2]) and 1 or 0,   -- top
+      has_char(border[6]) and 1 or 0,   -- bottom
+      has_char(border[8]) and 1 or 0,   -- left
+      has_char(border[4]) and 1 or 0    -- right
+  end
+  return 0, 0, 0, 0
+end
+
 ---@class NavRegion
----@field row number 0-indexed row in parent
----@field col number 0-indexed col in parent
----@field width number
----@field height number
+---@field row number 0-indexed row in parent (border top-left for bordered containers)
+---@field col number 0-indexed col in parent (border top-left for bordered containers)
+---@field width number Content width
+---@field height number Content height
+---@field border_top number Border thickness at top
+---@field border_bottom number Border thickness at bottom
+---@field border_left number Border thickness at left
+---@field border_right number Border thickness at right
+---@field visual_width number Total width including borders
+---@field visual_height number Total height including borders
 ---@field name string
 ---@field source "container"|"input"|"dropdown"|"multi_dropdown"
 ---@field container EmbeddedContainer The underlying EmbeddedContainer
@@ -112,11 +154,18 @@ local function build_region_map(fw)
       local c = fw._container_manager:get(name)
       if c and c:is_valid() then
         local g = c:get_region()
+        local bt, bb, bl, br = compute_border_offsets(c._config.border)
         table.insert(regions, {
           row = g.row,
           col = g.col,
           width = g.width,
           height = g.height,
+          border_top = bt,
+          border_bottom = bb,
+          border_left = bl,
+          border_right = br,
+          visual_width = g.width + bl + br,
+          visual_height = g.height + bt + bb,
           name = name,
           source = "container",
           container = c,
@@ -139,6 +188,12 @@ local function build_region_map(fw)
             col = g.col,
             width = g.width,
             height = g.height,
+            border_top = 0,
+            border_bottom = 0,
+            border_left = 0,
+            border_right = 0,
+            visual_width = g.width,
+            visual_height = g.height,
             name = entry.key,
             source = entry.type,
             container = c,
@@ -168,7 +223,7 @@ end
 ---@return NavRegion?
 local function find_region_on_row(regions, row0)
   for _, r in ipairs(regions) do
-    if row0 >= r.row and row0 < r.row + r.height then
+    if row0 >= r.row and row0 < r.row + r.visual_height then
       return r
     end
   end
@@ -182,8 +237,8 @@ end
 ---@return NavRegion?
 local function find_region_at(regions, row0, col0)
   for _, r in ipairs(regions) do
-    if row0 >= r.row and row0 < r.row + r.height
-      and col0 >= r.col and col0 < r.col + r.width then
+    if row0 >= r.row and row0 < r.row + r.visual_height
+      and col0 >= r.col and col0 < r.col + r.visual_width then
       return r
     end
   end
@@ -214,6 +269,25 @@ local function find_nearest_safe_row(regions, row0, total_lines)
   end
 
   return 0
+end
+
+---Check whether a target position in the parent is valid for exiting to.
+---@param fw FloatWindow
+---@param regions NavRegion[]
+---@param parent_row0 number 0-indexed target row in parent
+---@param parent_col0 number 0-indexed target col in parent
+---@return boolean
+local function can_exit_to(fw, regions, parent_row0, parent_col0)
+  if not fw:is_valid() then return false end
+  -- Out of buffer bounds?
+  local line_count = vim.api.nvim_buf_line_count(fw.bufnr)
+  if parent_row0 < 0 or parent_row0 >= line_count then return false end
+  if parent_col0 < 0 then return false end
+  -- Another container at target? Always valid (container-to-container transfer)
+  if find_region_at(regions, parent_row0, parent_col0) then return true end
+  -- Check parent line has content at target col
+  local line = vim.api.nvim_buf_get_lines(fw.bufnr, parent_row0, parent_row0 + 1, false)[1] or ""
+  return parent_col0 < #line
 end
 
 -- ============================================================================
@@ -257,11 +331,15 @@ local function enter_container(fw, region, cursor_row, cursor_col)
     vim.api.nvim_win_set_cursor(region.container.winid, { cursor_row, cursor_col })
   end
 
-  -- Focus triggers on_focus callback (e.g. enter_edit for inputs)
-  if region.field then
-    region.field:focus()
+  -- Focus the window
+  if region.source == "input" then
+    -- Direct window focus — skip on_focus callback to avoid auto-insert
+    vim.api.nvim_set_current_win(region.container.winid)
+    region.container._focused = true
+  elseif region.field then
+    region.field:focus()  -- dropdowns/multi-dropdowns: normal focus is fine
   else
-    region.container:focus()
+    region.container:focus()  -- content containers
   end
 end
 
@@ -329,9 +407,10 @@ local function setup_parent_keymaps(fw, regions, nav_keys)
 
       local region = find_region_at(regions, target_row0, col0)
       if region then
-        -- Enter at top of container
-        local local_col = math.max(0, col0 - region.col)
-        enter_container(fw, region, 1, local_col)
+        -- Enter at top of container content (offset by border)
+        local content_row = target_row0 - region.row - region.border_top + 1
+        local content_col = math.max(0, col0 - region.col - region.border_left)
+        enter_container(fw, region, content_row, content_col)
       else
         -- Check if target row is covered by a region at all (but col is outside)
         local row_region = find_region_on_row(regions, target_row0)
@@ -366,10 +445,10 @@ local function setup_parent_keymaps(fw, regions, nav_keys)
 
       local region = find_region_at(regions, target_row0, col0)
       if region then
-        -- Enter at bottom of container
-        local local_row = region.height  -- last row (1-indexed)
-        local local_col = math.max(0, col0 - region.col)
-        enter_container(fw, region, local_row, local_col)
+        -- Enter at appropriate content row (offset by border)
+        local content_row = target_row0 - region.row - region.border_top + 1
+        local content_col = math.max(0, col0 - region.col - region.border_left)
+        enter_container(fw, region, content_row, content_col)
       else
         pcall(vim.api.nvim_win_set_cursor, fw.winid, { target_row0 + 1, col0 })
       end
@@ -393,9 +472,9 @@ local function setup_parent_keymaps(fw, regions, nav_keys)
 
       local region = find_region_at(regions, row0, target_col0)
       if region then
-        local local_row = row0 - region.row + 1  -- 1-indexed within container
-        local local_col = target_col0 - region.col
-        enter_container(fw, region, local_row, local_col)
+        local content_row = row0 - region.row - region.border_top + 1
+        local content_col = math.max(0, target_col0 - region.col - region.border_left)
+        enter_container(fw, region, content_row, content_col)
       else
         -- Normal movement
         local line = vim.api.nvim_buf_get_lines(fw.bufnr, row0, row0 + 1, false)[1] or ""
@@ -428,9 +507,9 @@ local function setup_parent_keymaps(fw, regions, nav_keys)
 
       local region = find_region_at(regions, row0, target_col0)
       if region then
-        local local_row = row0 - region.row + 1
-        local local_col = target_col0 - region.col
-        enter_container(fw, region, local_row, local_col)
+        local content_row = row0 - region.row - region.border_top + 1
+        local content_col = math.max(0, target_col0 - region.col - region.border_left)
+        enter_container(fw, region, content_row, content_col)
       else
         pcall(vim.api.nvim_win_set_cursor, fw.winid, { row1, target_col0 })
       end
@@ -464,8 +543,8 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
     if target_region and target_region.name ~= region.name then
       -- Direct container-to-container transfer
       blur_current_container(fw)
-      local local_row = target_row0 - target_region.row + 1
-      local local_col = math.max(0, target_col0 - target_region.col)
+      local local_row = target_row0 - target_region.row - target_region.border_top + 1
+      local local_col = math.max(0, target_col0 - target_region.col - target_region.border_left)
       enter_container(fw, target_region, local_row, local_col)
       return
     end
@@ -501,9 +580,11 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
 
       if crow1 >= line_count then
         -- At last row -> exit downward
-        local parent_row0 = region.row + region.height  -- row just below container
-        local parent_col0 = region.col + ccol0
-        exit_to(parent_row0, parent_col0)
+        local parent_row0 = region.row + region.visual_height  -- row just below bottom border
+        local parent_col0 = region.col + region.border_left + ccol0
+        if can_exit_to(fw, regions, parent_row0, parent_col0) then
+          exit_to(parent_row0, parent_col0)
+        end
       else
         -- Normal movement within container
         pcall(vim.api.nvim_win_set_cursor, c.winid, { crow1 + 1, ccol0 })
@@ -521,9 +602,11 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
 
       if crow1 <= 1 then
         -- At first row -> exit upward
-        local parent_row0 = region.row - 1  -- row just above container
-        local parent_col0 = region.col + ccol0
-        exit_to(parent_row0, parent_col0)
+        local parent_row0 = region.row - 1  -- row just above top border
+        local parent_col0 = region.col + region.border_left + ccol0
+        if can_exit_to(fw, regions, parent_row0, parent_col0) then
+          exit_to(parent_row0, parent_col0)
+        end
       else
         pcall(vim.api.nvim_win_set_cursor, c.winid, { crow1 - 1, ccol0 })
       end
@@ -542,9 +625,11 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
 
       if ccol0 >= line_end then
         -- At end of line -> exit right
-        local parent_row0 = region.row + (crow1 - 1)
-        local parent_col0 = region.col + region.width
-        exit_to(parent_row0, parent_col0)
+        local parent_row0 = region.row + region.border_top + (crow1 - 1)
+        local parent_col0 = region.col + region.visual_width  -- just past right border
+        if can_exit_to(fw, regions, parent_row0, parent_col0) then
+          exit_to(parent_row0, parent_col0)
+        end
       else
         pcall(vim.api.nvim_win_set_cursor, c.winid, { crow1, ccol0 + 1 })
       end
@@ -561,9 +646,11 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
 
       if ccol0 <= 0 then
         -- At col 0 -> exit left
-        local parent_row0 = region.row + (crow1 - 1)
-        local parent_col0 = region.col - 1
-        exit_to(parent_row0, parent_col0)
+        local parent_row0 = region.row + region.border_top + (crow1 - 1)
+        local parent_col0 = region.col - 1  -- just before left border
+        if can_exit_to(fw, regions, parent_row0, parent_col0) then
+          exit_to(parent_row0, parent_col0)
+        end
       else
         pcall(vim.api.nvim_win_set_cursor, c.winid, { crow1, ccol0 - 1 })
       end
@@ -595,7 +682,9 @@ local function setup_cursor_guard(fw, regions)
       local region = find_region_at(regions, row0, col0)
       if region then
         fw._navigating = true
-        enter_container(fw, region, row0 - region.row + 1, col0 - region.col)
+        local content_row = row0 - region.row - region.border_top + 1
+        local content_col = math.max(0, col0 - region.col - region.border_left)
+        enter_container(fw, region, content_row, content_col)
         vim.schedule(function() fw._navigating = false end)
       end
     end,

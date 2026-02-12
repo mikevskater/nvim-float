@@ -71,19 +71,21 @@ function EmbeddedInput.new(config)
       self._container:blur()
     end, { buffer = self._container.bufnr, noremap = true, silent = true, desc = "Exit input" })
 
-    -- Enter to submit
+    -- Normal mode Enter: enter edit mode
     vim.keymap.set('n', '<CR>', function()
-      if config.on_submit then
-        config.on_submit(self.key, self._value)
-      end
-    end, { buffer = self._container.bufnr, noremap = true, silent = true, desc = "Submit input" })
+      self:enter_edit()
+    end, { buffer = self._container.bufnr, noremap = true, silent = true, desc = "Edit input" })
 
+    -- Normal mode i: enter edit mode
+    vim.keymap.set('n', 'i', function()
+      self:enter_edit()
+    end, { buffer = self._container.bufnr, noremap = true, silent = true, desc = "Edit input" })
+
+    -- Insert mode Enter: confirm and exit edit mode
     vim.keymap.set('i', '<CR>', function()
       self:exit_edit()
-      if config.on_submit then
-        config.on_submit(self.key, self._value)
-      end
-    end, { buffer = self._container.bufnr, noremap = true, silent = true, desc = "Submit input" })
+      vim.cmd("stopinsert")
+    end, { buffer = self._container.bufnr, noremap = true, silent = true, desc = "Confirm input" })
   end
 
   -- Display initial content
