@@ -526,6 +526,7 @@ function FloatWindow:render()
     if self._embedded_input_manager then
       self._embedded_input_manager:close_all()
     end
+    self._navigation_regions = nil
     self:_create_containers_from_builder(cb)
   end
 end
@@ -943,6 +944,14 @@ function FloatWindow:_create_containers_from_builder(cb)
       })
     end
   end
+
+  -- Setup spatial navigation after all containers are created
+  local nav_self = self
+  vim.schedule(function()
+    if nav_self:is_valid() then
+      require("nvim-float.container.navigation").setup(nav_self)
+    end
+  end)
 end
 
 -- ============================================================================
