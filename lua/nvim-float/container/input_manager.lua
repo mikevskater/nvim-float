@@ -236,6 +236,21 @@ function EmbeddedInputManager:get_all_values()
 end
 
 -- ============================================================================
+-- Iteration
+-- ============================================================================
+
+---Iterate all fields in order, calling callback(key, field, type) for each
+---@param callback fun(key: string, field: EmbeddedInput|EmbeddedDropdown|EmbeddedMultiDropdown, type: string)
+function EmbeddedInputManager:for_each_field(callback)
+  for _, entry in ipairs(self._field_order) do
+    local field = self:get_field(entry.key)
+    if field then
+      callback(entry.key, field, entry.type)
+    end
+  end
+end
+
+-- ============================================================================
 -- Cleanup
 -- ============================================================================
 

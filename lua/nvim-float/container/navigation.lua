@@ -96,12 +96,13 @@ end
 -- ============================================================================
 
 ---Compute border thickness offsets for a window border config.
+---Returns the number of rows/cols each border edge occupies.
 ---@param border any Border config (string, table, or nil)
 ---@return number top
 ---@return number bottom
 ---@return number left
 ---@return number right
-local function compute_border_offsets(border)
+function M.compute_border_offsets(border)
   if not border or border == "none" or border == "" then
     return 0, 0, 0, 0
   end
@@ -153,19 +154,22 @@ local function build_region_map(fw)
     for _, name in ipairs(names) do
       local c = fw._container_manager:get(name)
       if c and c:is_valid() then
-        local g = c:get_region()
-        local bt, bb, bl, br = compute_border_offsets(c._config.border)
+        local bt, bb, bl, br = M.compute_border_offsets(c._config.border)
+        local row = c._buffer_row or c._row
+        local col = c._buffer_col or c._col
+        local w = c._original_width or c._width
+        local h = c._original_height or c._height
         table.insert(regions, {
-          row = g.row,
-          col = g.col,
-          width = g.width,
-          height = g.height,
+          row = row,
+          col = col,
+          width = w,
+          height = h,
           border_top = bt,
           border_bottom = bb,
           border_left = bl,
           border_right = br,
-          visual_width = g.width + bl + br,
-          visual_height = g.height + bt + bb,
+          visual_width = w + bl + br,
+          visual_height = h + bt + bb,
           name = name,
           source = "container",
           container = c,
@@ -182,18 +186,21 @@ local function build_region_map(fw)
       if field and field:is_valid() then
         local c = field:get_container()
         if c and c:is_valid() then
-          local g = c:get_region()
+          local row = c._buffer_row or c._row
+          local col = c._buffer_col or c._col
+          local w = c._original_width or c._width
+          local h = c._original_height or c._height
           table.insert(regions, {
-            row = g.row,
-            col = g.col,
-            width = g.width,
-            height = g.height,
+            row = row,
+            col = col,
+            width = w,
+            height = h,
             border_top = 0,
             border_bottom = 0,
             border_left = 0,
             border_right = 0,
-            visual_width = g.width,
-            visual_height = g.height,
+            visual_width = w,
+            visual_height = h,
             name = entry.key,
             source = entry.type,
             container = c,
@@ -284,7 +291,8 @@ local function can_exit_to(fw, regions, parent_row0, parent_col0)
   if parent_row0 < 0 or parent_row0 >= line_count then return false end
   if parent_col0 < 0 then return false end
   -- Another container at target? Always valid (container-to-container transfer)
-  if find_region_at(regions, parent_row0, parent_col0) then return true end
+  local target_r = find_region_at(regions, parent_row0, parent_col0)
+  if target_r and not target_r.container:is_hidden() then return true end
   -- Check parent line has content at target col
   local line = vim.api.nvim_buf_get_lines(fw.bufnr, parent_row0, parent_row0 + 1, false)[1] or ""
   return parent_col0 < #line
@@ -414,7 +422,7 @@ local function setup_parent_keymaps(fw, regions, nav_keys)
       end
 
       local region = find_region_at(regions, target_row0, col0)
-      if region then
+      if region and not region.container:is_hidden() then
         -- Enter at top of container content (offset by border)
         local content_row = target_row0 - region.row - region.border_top + 1
         local content_col = math.max(0, col0 - region.col - region.border_left)
@@ -452,7 +460,7 @@ local function setup_parent_keymaps(fw, regions, nav_keys)
       end
 
       local region = find_region_at(regions, target_row0, col0)
-      if region then
+      if region and not region.container:is_hidden() then
         -- Enter at appropriate content row (offset by border)
         local content_row = target_row0 - region.row - region.border_top + 1
         local content_col = math.max(0, col0 - region.col - region.border_left)
@@ -479,7 +487,7 @@ local function setup_parent_keymaps(fw, regions, nav_keys)
       local row0 = row1 - 1
 
       local region = find_region_at(regions, row0, target_col0)
-      if region then
+      if region and not region.container:is_hidden() then
         local content_row = row0 - region.row - region.border_top + 1
         local content_col = math.max(0, target_col0 - region.col - region.border_left)
         enter_container(fw, region, content_row, content_col)
@@ -514,7 +522,7 @@ local function setup_parent_keymaps(fw, regions, nav_keys)
       end
 
       local region = find_region_at(regions, row0, target_col0)
-      if region then
+      if region and not region.container:is_hidden() then
         local content_row = row0 - region.row - region.border_top + 1
         local content_col = math.max(0, target_col0 - region.col - region.border_left)
         enter_container(fw, region, content_row, content_col)
@@ -548,7 +556,7 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
   local function exit_to(target_row0, target_col0)
     -- Check if target hits another container
     local target_region = find_region_at(regions, target_row0, target_col0)
-    if target_region and target_region.name ~= region.name then
+    if target_region and target_region.name ~= region.name and not target_region.container:is_hidden() then
       -- Direct container-to-container transfer
       blur_current_container(fw)
       local local_row = target_row0 - target_region.row - target_region.border_top + 1
@@ -563,8 +571,9 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
       vim.api.nvim_set_current_win(fw.winid)
       local line_count = vim.api.nvim_buf_line_count(fw.bufnr)
 
-      -- If target is still on a container region, snap to safety
-      if find_region_at(regions, target_row0, target_col0) then
+      -- If target is still on a visible container region, snap to safety
+      local snap_r = find_region_at(regions, target_row0, target_col0)
+      if snap_r and not snap_r.container:is_hidden() then
         target_row0 = find_nearest_safe_row(regions, target_row0, line_count)
       end
 
@@ -707,7 +716,7 @@ local function setup_cursor_guard(fw, regions)
       local col0 = cursor[2]
 
       local region = find_region_at(regions, row0, col0)
-      if region then
+      if region and not region.container:is_hidden() then
         fw._navigating = true
         local content_row = row0 - region.row - region.border_top + 1
         local content_col = math.max(0, col0 - region.col - region.border_left)

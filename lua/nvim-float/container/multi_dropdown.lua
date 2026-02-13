@@ -668,6 +668,23 @@ function EmbeddedMultiDropdown:update_region(row, col, width)
   end
 end
 
+---Hide the multi-dropdown (scroll-sync); closes list if open
+function EmbeddedMultiDropdown:hide()
+  if self._list_open then self:close_list(true) end
+  self._container:hide()
+end
+
+---Show the multi-dropdown (scroll-sync)
+function EmbeddedMultiDropdown:show()
+  self._container:show()
+end
+
+---Check if hidden by scroll sync
+---@return boolean
+function EmbeddedMultiDropdown:is_hidden()
+  return self._container:is_hidden()
+end
+
 ---Close the multi-dropdown
 function EmbeddedMultiDropdown:close()
   if self._list_open then

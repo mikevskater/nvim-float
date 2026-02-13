@@ -132,6 +132,8 @@ function UiFloat.create(lines, config)
     -- Create embedded containers from content builder
     if content_builder.get_containers and content_builder:get_containers() then
       instance:_create_containers_from_builder(content_builder)
+      -- Setup scroll sync after containers are created
+      require("nvim-float.container.scroll_sync").setup(instance)
     end
   end
 
@@ -269,6 +271,9 @@ function FloatWindow:is_valid()
 end
 
 function FloatWindow:close()
+  -- Teardown scroll sync before closing containers
+  require("nvim-float.container.scroll_sync").teardown(self)
+
   -- Close embedded containers first
   if self._container_manager then
     self._container_manager:close_all()
@@ -519,6 +524,8 @@ function FloatWindow:render()
 
   -- Recreate embedded containers
   if cb.get_containers and cb:get_containers() then
+    -- Teardown scroll sync before closing old containers
+    require("nvim-float.container.scroll_sync").teardown(self)
     -- Close existing containers before recreating
     if self._container_manager then
       self._container_manager:close_all()
@@ -528,6 +535,8 @@ function FloatWindow:render()
     end
     self._navigation_regions = nil
     self:_create_containers_from_builder(cb)
+    -- Setup scroll sync after new containers created
+    require("nvim-float.container.scroll_sync").setup(self)
   end
 end
 

@@ -96,6 +96,25 @@ function EmbeddedContainer.new(config)
   self._win_col = config.col
   self._win_width = config.width
   self._win_height = config.height
+
+  -- Stable buffer-relative position (set once at creation, never changes)
+  self._buffer_row = config.row
+  self._buffer_col = config.col
+  self._original_width = config.width
+  self._original_height = config.height
+
+  -- Border offsets (computed once)
+  local nav = require("nvim-float.container.navigation")
+  local bt, bb, bl, br = nav.compute_border_offsets(config.border)
+  self._border_top = bt
+  self._border_bottom = bb
+  self._border_left = bl
+  self._border_right = br
+
+  -- Scroll-sync state
+  self._hidden = false
+  self._last_clip_top = 0
+
   self.config = {
     zindex = self._zindex,
     scrollbar = config.scrollbar ~= false,
@@ -177,6 +196,40 @@ end
 ---@return boolean
 function EmbeddedContainer:is_focused()
   return self._focused
+end
+
+-- ============================================================================
+-- Scroll-Sync Visibility
+-- ============================================================================
+
+---Hide this container (keeps window/buffer intact, just toggles visibility)
+function EmbeddedContainer:hide()
+  if self._hidden then return end
+  self._hidden = true
+  if self.winid and vim.api.nvim_win_is_valid(self.winid) then
+    vim.api.nvim_win_set_config(self.winid, { hide = true })
+  end
+  if self._scrollbar_winid and vim.api.nvim_win_is_valid(self._scrollbar_winid) then
+    vim.api.nvim_win_set_config(self._scrollbar_winid, { hide = true })
+  end
+end
+
+---Show this container (restore visibility)
+function EmbeddedContainer:show()
+  if not self._hidden then return end
+  self._hidden = false
+  if self.winid and vim.api.nvim_win_is_valid(self.winid) then
+    vim.api.nvim_win_set_config(self.winid, { hide = false })
+  end
+  if self._scrollbar_winid and vim.api.nvim_win_is_valid(self._scrollbar_winid) then
+    vim.api.nvim_win_set_config(self._scrollbar_winid, { hide = false })
+  end
+end
+
+---Check if this container is hidden by scroll sync
+---@return boolean
+function EmbeddedContainer:is_hidden()
+  return self._hidden
 end
 
 -- ============================================================================

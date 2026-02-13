@@ -277,6 +277,22 @@ function EmbeddedInput:update_region(row, col, width)
   end
 end
 
+---Hide the input (scroll-sync)
+function EmbeddedInput:hide()
+  self._container:hide()
+end
+
+---Show the input (scroll-sync)
+function EmbeddedInput:show()
+  self._container:show()
+end
+
+---Check if hidden by scroll sync
+---@return boolean
+function EmbeddedInput:is_hidden()
+  return self._container:is_hidden()
+end
+
 ---Close the input
 function EmbeddedInput:close()
   if self._autocmd_group then
