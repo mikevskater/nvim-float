@@ -454,7 +454,7 @@ end
 ---The container will be created as a child window when the ContentBuilder is
 ---applied to a FloatWindow via UiFloat.create() or FloatWindow:render().
 ---@param name string Unique container name
----@param opts { height: number, width?: number, col?: number, border?: string|table, focusable?: boolean, scrollbar?: boolean, content_builder?: ContentBuilder, on_focus?: fun(), on_blur?: fun(), zindex_offset?: number }
+---@param opts { height: number, width?: number, col?: number, border?: string|table, focusable?: boolean, scrollbar?: boolean, content_builder?: ContentBuilder, on_focus?: fun(), on_blur?: fun(), zindex_offset?: number, winhighlight?: string }
 ---@return ContentBuilder self For chaining
 function ContentBuilder:container(name, opts)
   opts = opts or {}
@@ -490,6 +490,7 @@ function ContentBuilder:container(name, opts)
     on_focus = opts.on_focus,
     on_blur = opts.on_blur,
     zindex_offset = opts.zindex_offset,
+    winhighlight = opts.winhighlight,
   }
 
   return self
@@ -497,7 +498,7 @@ end
 
 ---Reserve space for an embedded text input and record its definition
 ---@param key string Unique input key
----@param opts { width: number, col?: number, placeholder?: string, value?: string, label?: string, on_change?: fun(key: string, value: string), on_submit?: fun(key: string, value: string), zindex_offset?: number }
+---@param opts { width: number, col?: number, placeholder?: string, value?: string, label?: string, on_change?: fun(key: string, value: string), on_submit?: fun(key: string, value: string), zindex_offset?: number, winhighlight?: string, border?: string|table }
 ---@return ContentBuilder self For chaining
 function ContentBuilder:embedded_input(key, opts)
   opts = opts or {}
@@ -529,6 +530,8 @@ function ContentBuilder:embedded_input(key, opts)
     on_change = opts.on_change,
     on_submit = opts.on_submit,
     zindex_offset = opts.zindex_offset,
+    winhighlight = opts.winhighlight,
+    border = opts.border,
   }
 
   return self
@@ -536,7 +539,7 @@ end
 
 ---Reserve space for an embedded dropdown and record its definition
 ---@param key string Unique dropdown key
----@param opts { width: number, col?: number, options: table[], selected?: string, label?: string, placeholder?: string, max_height?: number, on_change?: fun(key: string, value: string), zindex_offset?: number }
+---@param opts { width: number, col?: number, options: table[], selected?: string, label?: string, placeholder?: string, max_height?: number, on_change?: fun(key: string, value: string), zindex_offset?: number, winhighlight?: string, border?: string|table }
 ---@return ContentBuilder self For chaining
 function ContentBuilder:embedded_dropdown(key, opts)
   opts = opts or {}
@@ -569,6 +572,8 @@ function ContentBuilder:embedded_dropdown(key, opts)
     max_height = opts.max_height,
     on_change = opts.on_change,
     zindex_offset = opts.zindex_offset,
+    winhighlight = opts.winhighlight,
+    border = opts.border,
   }
 
   return self
@@ -576,7 +581,7 @@ end
 
 ---Reserve space for an embedded multi-dropdown and record its definition
 ---@param key string Unique multi-dropdown key
----@param opts { width: number, col?: number, options: table[], selected?: string[], label?: string, placeholder?: string, max_height?: number, display_mode?: "count"|"list", on_change?: fun(key: string, values: string[]), zindex_offset?: number }
+---@param opts { width: number, col?: number, options: table[], selected?: string[], label?: string, placeholder?: string, max_height?: number, display_mode?: "count"|"list", on_change?: fun(key: string, values: string[]), zindex_offset?: number, winhighlight?: string, border?: string|table }
 ---@return ContentBuilder self For chaining
 function ContentBuilder:embedded_multi_dropdown(key, opts)
   opts = opts or {}
@@ -610,6 +615,8 @@ function ContentBuilder:embedded_multi_dropdown(key, opts)
     display_mode = opts.display_mode,
     on_change = opts.on_change,
     zindex_offset = opts.zindex_offset,
+    winhighlight = opts.winhighlight,
+    border = opts.border,
   }
 
   return self

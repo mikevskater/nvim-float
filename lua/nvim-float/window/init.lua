@@ -890,6 +890,7 @@ function FloatWindow:_create_containers_from_builder(cb)
         content_builder = def.content_builder,
         on_focus = def.on_focus,
         on_blur = def.on_blur,
+        winhighlight = def.winhighlight,
       })
     elseif def.type == "embedded_input" then
       local width = def.width or self._win_width
@@ -906,6 +907,8 @@ function FloatWindow:_create_containers_from_builder(cb)
         value = def.value,
         on_change = def.on_change,
         on_submit = def.on_submit,
+        winhighlight = def.winhighlight,
+        border = def.border,
       })
     elseif def.type == "embedded_dropdown" then
       local width = def.width or self._win_width
@@ -923,6 +926,8 @@ function FloatWindow:_create_containers_from_builder(cb)
         placeholder = def.placeholder,
         max_height = def.max_height,
         on_change = def.on_change,
+        winhighlight = def.winhighlight,
+        border = def.border,
       })
     elseif def.type == "embedded_multi_dropdown" then
       local width = def.width or self._win_width
@@ -941,6 +946,8 @@ function FloatWindow:_create_containers_from_builder(cb)
         max_height = def.max_height,
         display_mode = def.display_mode,
         on_change = def.on_change,
+        winhighlight = def.winhighlight,
+        border = def.border,
       })
     end
   end
