@@ -106,7 +106,9 @@ function EmbeddedInput:enter_edit()
   self._in_edit = true
   local bufnr = self._container.bufnr
 
-  -- Show actual value (not placeholder)
+  -- Clear placeholder virtual text and show actual value
+  local ns = vim.api.nvim_create_namespace("nvim_float_input_ph_" .. self.key)
+  vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
   vim.api.nvim_set_option_value('modifiable', true, { buf = bufnr })
   vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { self._value })
   self._showing_placeholder = false
@@ -214,35 +216,29 @@ function EmbeddedInput:_render_display()
   if not self._container:is_valid() then return end
 
   local bufnr = self._container.bufnr
-  local display_text
+  local ns = vim.api.nvim_create_namespace("nvim_float_input_ph_" .. self.key)
 
   vim.api.nvim_set_option_value('modifiable', true, { buf = bufnr })
 
-  if self._value == "" and self._placeholder ~= "" then
-    -- Show placeholder
-    display_text = self._placeholder
-    self._showing_placeholder = true
+  -- Always set the real value in the buffer
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { self._value })
 
-    -- Pad or truncate to width
+  -- Clear any existing placeholder virtual text
+  vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+
+  if self._value == "" and self._placeholder ~= "" then
+    -- Show placeholder as virtual text overlay (doesn't affect buffer content)
+    self._showing_placeholder = true
+    local display_text = self._placeholder
     if #display_text > self._config.width then
       display_text = display_text:sub(1, self._config.width)
     end
-
-    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { display_text })
-
-    -- Apply placeholder highlight
-    local ns = vim.api.nvim_create_namespace("nvim_float_input_ph_" .. self.key)
-    vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
-    pcall(vim.api.nvim_buf_add_highlight, bufnr, ns, "NvimFloatInputPlaceholder", 0, 0, #display_text)
+    vim.api.nvim_buf_set_extmark(bufnr, ns, 0, 0, {
+      virt_text = { { display_text, "NvimFloatInputPlaceholder" } },
+      virt_text_pos = "overlay",
+    })
   else
-    -- Show value
-    display_text = self._value
     self._showing_placeholder = false
-    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { display_text })
-
-    -- Clear placeholder highlight
-    local ns = vim.api.nvim_create_namespace("nvim_float_input_ph_" .. self.key)
-    vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
   end
 
   if not self._in_edit then

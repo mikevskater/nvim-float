@@ -461,7 +461,7 @@ function EmbeddedMultiDropdown:_open_filter()
   self._filter_winid = vim.api.nvim_open_win(self._filter_bufnr, true, {
     relative = "win",
     win = self._list_winid,
-    row = -2,
+    row = -3,
     col = -1,
     width = self._config.width,
     height = 1,
@@ -475,20 +475,24 @@ function EmbeddedMultiDropdown:_open_filter()
     'Normal:Normal,FloatBorder:NvimFloatBorder',
     { win = self._filter_winid })
 
-  -- Set placeholder
-  vim.api.nvim_buf_set_lines(self._filter_bufnr, 0, -1, false, { "Type to filter..." })
+  -- Set placeholder as virtual text (doesn't affect buffer content or filtering)
+  local filter_ns = vim.api.nvim_create_namespace("nvim_float_filter_" .. self.key)
+  vim.api.nvim_buf_set_extmark(self._filter_bufnr, filter_ns, 0, 0, {
+    virt_text = { { "Type to filter...", "Comment" } },
+    virt_text_pos = "overlay",
+  })
 
   -- Setup keymaps on filter buffer
   local fopts = { buffer = self._filter_bufnr, noremap = true, silent = true }
 
   -- Normal mode: i or Enter to start typing (clears placeholder)
   vim.keymap.set('n', 'i', function()
-    vim.api.nvim_buf_set_lines(self._filter_bufnr, 0, -1, false, { "" })
+    vim.api.nvim_buf_clear_namespace(self._filter_bufnr, filter_ns, 0, -1)
     vim.cmd('startinsert')
   end, fopts)
 
   vim.keymap.set('n', '<CR>', function()
-    vim.api.nvim_buf_set_lines(self._filter_bufnr, 0, -1, false, { "" })
+    vim.api.nvim_buf_clear_namespace(self._filter_bufnr, filter_ns, 0, -1)
     vim.cmd('startinsert')
   end, fopts)
 
