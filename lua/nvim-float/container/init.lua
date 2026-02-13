@@ -111,9 +111,27 @@ function EmbeddedContainer.new(config)
   self._border_left = bl
   self._border_right = br
 
+  -- Original border (for scroll-sync dynamic clipping)
+  self._original_border = config.border or "none"
+
+  -- Separate border windows (created lazily on first scroll sync)
+  self._border_top_winid = nil
+  self._border_top_bufnr = nil
+  self._border_bottom_winid = nil
+  self._border_bottom_bufnr = nil
+  self._border_left_winid = nil
+  self._border_left_bufnr = nil
+  self._border_right_winid = nil
+  self._border_right_bufnr = nil
+  self._border_windows_initialized = false
+  self._content_hidden = false
+
   -- Scroll-sync state
   self._hidden = false
   self._last_clip_top = 0
+  self._last_clip_bottom = 0
+  self._last_clip_left = 0
+  self._last_clip_right = 0
 
   self.config = {
     zindex = self._zindex,
@@ -125,7 +143,7 @@ function EmbeddedContainer.new(config)
   -- Window options
   vim.api.nvim_set_option_value('wrap', false, { win = self.winid })
   vim.api.nvim_set_option_value('foldenable', false, { win = self.winid })
-  vim.api.nvim_set_option_value('cursorline', config.cursorline ~= false, { win = self.winid })
+  vim.api.nvim_set_option_value('cursorline', false, { win = self.winid })
   vim.api.nvim_set_option_value('number', false, { win = self.winid })
   vim.api.nvim_set_option_value('relativenumber', false, { win = self.winid })
   vim.api.nvim_set_option_value('signcolumn', 'no', { win = self.winid })
@@ -174,6 +192,9 @@ function EmbeddedContainer:focus()
   if not self:is_valid() then return end
   vim.api.nvim_set_current_win(self.winid)
   self._focused = true
+  if self._config.cursorline ~= false then
+    vim.api.nvim_set_option_value('cursorline', true, { win = self.winid })
+  end
   if self._config.on_focus then
     self._config.on_focus()
   end
@@ -183,6 +204,9 @@ end
 function EmbeddedContainer:blur()
   if not self:is_valid() then return end
   self._focused = false
+  if self.winid and vim.api.nvim_win_is_valid(self.winid) then
+    vim.api.nvim_set_option_value('cursorline', false, { win = self.winid })
+  end
   if self._config.on_blur then
     self._config.on_blur()
   end
@@ -202,34 +226,403 @@ end
 -- Scroll-Sync Visibility
 -- ============================================================================
 
----Hide this container (keeps window/buffer intact, just toggles visibility)
-function EmbeddedContainer:hide()
-  if self._hidden then return end
-  self._hidden = true
-  if self.winid and vim.api.nvim_win_is_valid(self.winid) then
-    vim.api.nvim_win_set_config(self.winid, { hide = true })
-  end
-  if self._scrollbar_winid and vim.api.nvim_win_is_valid(self._scrollbar_winid) then
-    vim.api.nvim_win_set_config(self._scrollbar_winid, { hide = true })
+---@private
+local function win_hide(winid)
+  if winid and vim.api.nvim_win_is_valid(winid) then
+    vim.api.nvim_win_set_config(winid, { hide = true })
   end
 end
 
----Show this container (restore visibility)
+---@private
+local function win_show(winid)
+  if winid and vim.api.nvim_win_is_valid(winid) then
+    vim.api.nvim_win_set_config(winid, { hide = false })
+  end
+end
+
+---Hide this container (all components: content + borders + scrollbar)
+function EmbeddedContainer:hide()
+  if self._hidden then return end
+  self._hidden = true
+  self:hide_content()
+  self:hide_border_top()
+  self:hide_border_bottom()
+  self:hide_border_left()
+  self:hide_border_right()
+  win_hide(self._scrollbar_winid)
+end
+
+---Show this container (all components)
 function EmbeddedContainer:show()
   if not self._hidden then return end
   self._hidden = false
-  if self.winid and vim.api.nvim_win_is_valid(self.winid) then
-    vim.api.nvim_win_set_config(self.winid, { hide = false })
-  end
-  if self._scrollbar_winid and vim.api.nvim_win_is_valid(self._scrollbar_winid) then
-    vim.api.nvim_win_set_config(self._scrollbar_winid, { hide = false })
-  end
+  self:show_content()
+  self:show_border_top()
+  self:show_border_bottom()
+  self:show_border_left()
+  self:show_border_right()
+  win_show(self._scrollbar_winid)
 end
 
 ---Check if this container is hidden by scroll sync
 ---@return boolean
 function EmbeddedContainer:is_hidden()
   return self._hidden
+end
+
+-- ── Per-component hide/show ───────────────────────────────────────────
+
+function EmbeddedContainer:hide_content()
+  if self._content_hidden then return end
+  self._content_hidden = true
+  win_hide(self.winid)
+  win_hide(self._scrollbar_winid)
+end
+
+function EmbeddedContainer:show_content()
+  if not self._content_hidden then return end
+  self._content_hidden = false
+  win_show(self.winid)
+  win_show(self._scrollbar_winid)
+end
+
+function EmbeddedContainer:hide_border_top()
+  win_hide(self._border_top_winid)
+end
+
+function EmbeddedContainer:show_border_top()
+  win_show(self._border_top_winid)
+end
+
+function EmbeddedContainer:hide_border_bottom()
+  win_hide(self._border_bottom_winid)
+end
+
+function EmbeddedContainer:show_border_bottom()
+  win_show(self._border_bottom_winid)
+end
+
+function EmbeddedContainer:hide_border_left()
+  win_hide(self._border_left_winid)
+end
+
+function EmbeddedContainer:show_border_left()
+  win_show(self._border_left_winid)
+end
+
+function EmbeddedContainer:hide_border_right()
+  win_hide(self._border_right_winid)
+end
+
+function EmbeddedContainer:show_border_right()
+  win_show(self._border_right_winid)
+end
+
+-- ── Per-component reposition ──────────────────────────────────────────
+
+---Reposition and rebuild top border window.
+---@param row number Row relative to parent
+---@param col number Col relative to parent
+---@param inner_width number Content width for the fill chars
+---@param include_left_corner boolean
+---@param include_right_corner boolean
+function EmbeddedContainer:reposition_border_top(row, col, inner_width, include_left_corner, include_right_corner)
+  local winid = self._border_top_winid
+  if not winid or not vim.api.nvim_win_is_valid(winid) then return end
+  local chars = self._border_chars
+  if not chars then return end
+
+  local line = self:_build_border_line(chars, "top", inner_width, include_left_corner, include_right_corner)
+  local display_w = vim.fn.strdisplaywidth(line)
+  if display_w < 1 then display_w = 1 end
+
+  local bufnr = self._border_top_bufnr
+  vim.api.nvim_set_option_value('modifiable', true, { buf = bufnr })
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { line })
+  vim.api.nvim_set_option_value('modifiable', false, { buf = bufnr })
+
+  vim.api.nvim_win_set_config(winid, {
+    relative = "win",
+    win = self._parent_winid,
+    row = row,
+    col = col,
+    width = display_w,
+    height = 1,
+  })
+end
+
+---Reposition and rebuild bottom border window.
+---@param row number Row relative to parent
+---@param col number Col relative to parent
+---@param inner_width number Content width for the fill chars
+---@param include_left_corner boolean
+---@param include_right_corner boolean
+function EmbeddedContainer:reposition_border_bottom(row, col, inner_width, include_left_corner, include_right_corner)
+  local winid = self._border_bottom_winid
+  if not winid or not vim.api.nvim_win_is_valid(winid) then return end
+  local chars = self._border_chars
+  if not chars then return end
+
+  local line = self:_build_border_line(chars, "bottom", inner_width, include_left_corner, include_right_corner)
+  local display_w = vim.fn.strdisplaywidth(line)
+  if display_w < 1 then display_w = 1 end
+
+  local bufnr = self._border_bottom_bufnr
+  vim.api.nvim_set_option_value('modifiable', true, { buf = bufnr })
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { line })
+  vim.api.nvim_set_option_value('modifiable', false, { buf = bufnr })
+
+  vim.api.nvim_win_set_config(winid, {
+    relative = "win",
+    win = self._parent_winid,
+    row = row,
+    col = col,
+    width = display_w,
+    height = 1,
+  })
+end
+
+---Reposition and rebuild left border window.
+---@param row number Row relative to parent
+---@param col number Col relative to parent
+---@param height number New visible height
+function EmbeddedContainer:reposition_border_left(row, col, height)
+  local winid = self._border_left_winid
+  if not winid or not vim.api.nvim_win_is_valid(winid) then return end
+  local chars = self._border_chars
+  if not chars then return end
+
+  local lines = self:_build_side_border_lines(chars, "left", height)
+
+  local bufnr = self._border_left_bufnr
+  vim.api.nvim_set_option_value('modifiable', true, { buf = bufnr })
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+  vim.api.nvim_set_option_value('modifiable', false, { buf = bufnr })
+
+  vim.api.nvim_win_set_config(winid, {
+    relative = "win",
+    win = self._parent_winid,
+    row = row,
+    col = col,
+    width = 1,
+    height = height,
+  })
+end
+
+---Reposition and rebuild right border window.
+---@param row number Row relative to parent
+---@param col number Col relative to parent
+---@param height number New visible height
+function EmbeddedContainer:reposition_border_right(row, col, height)
+  local winid = self._border_right_winid
+  if not winid or not vim.api.nvim_win_is_valid(winid) then return end
+  local chars = self._border_chars
+  if not chars then return end
+
+  local lines = self:_build_side_border_lines(chars, "right", height)
+
+  local bufnr = self._border_right_bufnr
+  vim.api.nvim_set_option_value('modifiable', true, { buf = bufnr })
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+  vim.api.nvim_set_option_value('modifiable', false, { buf = bufnr })
+
+  vim.api.nvim_win_set_config(winid, {
+    relative = "win",
+    win = self._parent_winid,
+    row = row,
+    col = col,
+    width = 1,
+    height = height,
+  })
+end
+
+-- ============================================================================
+-- Border Window Helpers (private)
+-- ============================================================================
+
+---Get the border character from a border element (handles {char, hl} tables)
+---@param elem string|table
+---@return string
+local function border_char(elem)
+  if type(elem) == "table" then return elem[1] or "" end
+  return elem or ""
+end
+
+---Build a single-line string for top or bottom border window.
+---@param chars table 8-element border character table
+---@param side "top"|"bottom"
+---@param inner_width number Width of content area (excluding corners)
+---@param include_left_corner boolean Whether to include the left corner char
+---@param include_right_corner boolean Whether to include the right corner char
+---@return string
+function EmbeddedContainer:_build_border_line(chars, side, inner_width, include_left_corner, include_right_corner)
+  local left_corner, fill, right_corner
+  if side == "top" then
+    left_corner = border_char(chars[1])
+    fill = border_char(chars[2])
+    right_corner = border_char(chars[3])
+  else
+    left_corner = border_char(chars[7])
+    fill = border_char(chars[6])
+    right_corner = border_char(chars[5])
+  end
+  local result = ""
+  if include_left_corner then result = result .. left_corner end
+  result = result .. string.rep(fill, inner_width)
+  if include_right_corner then result = result .. right_corner end
+  return result
+end
+
+---Build multi-line content for left or right border window.
+---@param chars table 8-element border character table
+---@param side "left"|"right"
+---@param height number Number of rows
+---@return string[]
+function EmbeddedContainer:_build_side_border_lines(chars, side, height)
+  local ch
+  if side == "left" then
+    ch = border_char(chars[8])
+  else
+    ch = border_char(chars[4])
+  end
+  local lines = {}
+  for _ = 1, height do
+    table.insert(lines, ch)
+  end
+  return lines
+end
+
+---Extract the FloatBorder highlight group from winhighlight string.
+---@return string The highlight group name for borders
+function EmbeddedContainer:_extract_border_hl()
+  local whl = self._config.winhighlight or ""
+  local hl = whl:match("FloatBorder:([^,]+)")
+  return hl or "NvimFloatBorder"
+end
+
+-- ============================================================================
+-- Border Window Lifecycle (private)
+-- ============================================================================
+
+---Helper to create a single border window with its buffer.
+---@param lines string[] Buffer content lines
+---@param row number Row relative to parent
+---@param col number Col relative to parent
+---@param width number Window width
+---@param height number Window height
+---@param border_hl string Highlight group for border chars
+---@return number winid
+---@return number bufnr
+function EmbeddedContainer:_create_border_win(lines, row, col, width, height, border_hl)
+  local bufnr = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_option_value('buftype', 'nofile', { buf = bufnr })
+  vim.api.nvim_set_option_value('bufhidden', 'wipe', { buf = bufnr })
+  vim.api.nvim_set_option_value('swapfile', false, { buf = bufnr })
+  vim.api.nvim_set_option_value('modifiable', true, { buf = bufnr })
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+  vim.api.nvim_set_option_value('modifiable', false, { buf = bufnr })
+
+  local winid = vim.api.nvim_open_win(bufnr, false, {
+    relative = "win",
+    win = self._parent_winid,
+    row = row,
+    col = col,
+    width = width,
+    height = height,
+    zindex = self._zindex,
+    border = "none",
+    style = "minimal",
+    focusable = false,
+  })
+
+  vim.api.nvim_set_option_value('wrap', false, { win = winid })
+  vim.api.nvim_set_option_value('winblend', self.config.winblend or 0, { win = winid })
+  vim.api.nvim_set_option_value('winhighlight',
+    'Normal:' .. border_hl .. ',NormalFloat:' .. border_hl, { win = winid })
+
+  return winid, bufnr
+end
+
+---Create all 4 border windows. Called lazily by scroll_sync on first sync.
+function EmbeddedContainer:_setup_border_windows()
+  if self._border_windows_initialized then return end
+
+  local scroll_sync = require("nvim-float.container.scroll_sync")
+  local chars = scroll_sync.border_to_table(self._original_border)
+  if not chars then return end
+
+  local border_hl = self:_extract_border_hl()
+  local orig_w = self._original_width
+  local orig_h = self._original_height
+  local buf_row = self._buffer_row
+  local buf_col = self._buffer_col
+  local bt = self._border_top
+  local bl = self._border_left
+
+  -- Store resolved chars for later reposition calls
+  self._border_chars = chars
+
+  -- Top border: 1 row × (orig_w + left + right corners)
+  local top_line = self:_build_border_line(chars, "top", orig_w, true, true)
+  local top_w = vim.fn.strdisplaywidth(top_line)
+  self._border_top_winid, self._border_top_bufnr = self:_create_border_win(
+    { top_line }, buf_row, buf_col, top_w, 1, border_hl)
+
+  -- Bottom border: 1 row × (orig_w + left + right corners)
+  local bot_line = self:_build_border_line(chars, "bottom", orig_w, true, true)
+  local bot_w = vim.fn.strdisplaywidth(bot_line)
+  self._border_bottom_winid, self._border_bottom_bufnr = self:_create_border_win(
+    { bot_line }, buf_row + bt + orig_h, buf_col, bot_w, 1, border_hl)
+
+  -- Left border: orig_h rows × 1 col
+  if bl > 0 then
+    local left_lines = self:_build_side_border_lines(chars, "left", orig_h)
+    self._border_left_winid, self._border_left_bufnr = self:_create_border_win(
+      left_lines, buf_row + bt, buf_col, 1, orig_h, border_hl)
+  end
+
+  -- Right border: orig_h rows × 1 col
+  local br = self._border_right
+  if br > 0 then
+    local right_lines = self:_build_side_border_lines(chars, "right", orig_h)
+    self._border_right_winid, self._border_right_bufnr = self:_create_border_win(
+      right_lines, buf_row + bt, buf_col + bl + orig_w, 1, orig_h, border_hl)
+  end
+
+  -- Reconfigure content window to borderless and reposition
+  vim.api.nvim_win_set_config(self.winid, {
+    relative = "win",
+    win = self._parent_winid,
+    row = buf_row + bt,
+    col = buf_col + bl,
+    width = orig_w,
+    height = orig_h,
+    border = "none",
+  })
+
+  self._border_windows_initialized = true
+end
+
+---Close all 4 border windows and their buffers.
+function EmbeddedContainer:_close_border_windows()
+  local wins = {
+    { winid = "_border_top_winid", bufnr = "_border_top_bufnr" },
+    { winid = "_border_bottom_winid", bufnr = "_border_bottom_bufnr" },
+    { winid = "_border_left_winid", bufnr = "_border_left_bufnr" },
+    { winid = "_border_right_winid", bufnr = "_border_right_bufnr" },
+  }
+  for _, w in ipairs(wins) do
+    if self[w.winid] and vim.api.nvim_win_is_valid(self[w.winid]) then
+      vim.api.nvim_win_close(self[w.winid], true)
+    end
+    self[w.winid] = nil
+    if self[w.bufnr] and vim.api.nvim_buf_is_valid(self[w.bufnr]) then
+      vim.api.nvim_buf_delete(self[w.bufnr], { force = true })
+    end
+    self[w.bufnr] = nil
+  end
+  self._border_windows_initialized = false
+  self._border_chars = nil
 end
 
 -- ============================================================================
@@ -313,7 +706,8 @@ end
 ---@param col number? New col offset (0-indexed)
 ---@param width number? New width
 ---@param height number? New height
-function EmbeddedContainer:update_region(row, col, width, height)
+---@param border string|table? Border override (for dynamic clipping)
+function EmbeddedContainer:update_region(row, col, width, height, border)
   if not self:is_valid() then return end
 
   self._row = row or self._row
@@ -327,14 +721,18 @@ function EmbeddedContainer:update_region(row, col, width, height)
   self._win_width = self._width
   self._win_height = self._height
 
-  vim.api.nvim_win_set_config(self.winid, {
+  local win_config = {
     relative = "win",
     win = self._parent_winid,
     row = self._row,
     col = self._col,
     width = self._width,
     height = self._height,
-  })
+  }
+  if border ~= nil then
+    win_config.border = border
+  end
+  vim.api.nvim_win_set_config(self.winid, win_config)
 
   -- Reposition scrollbar
   if self._scrollbar_winid and vim.api.nvim_win_is_valid(self._scrollbar_winid) then
@@ -441,6 +839,10 @@ function EmbeddedContainer:_reposition_scrollbar()
     width = 1,
     height = self._height,
   })
+  -- Invalidate cache so update() regenerates content for the new height
+  self._scrollbar_last_top = nil
+  self._scrollbar_last_total = nil
+  self._scrollbar_last_content = nil
   get_scrollbar().update(self)
 end
 
@@ -463,6 +865,9 @@ end
 
 ---Close the container, cleaning up all resources
 function EmbeddedContainer:close()
+  -- Close border windows
+  self:_close_border_windows()
+
   -- Close scrollbar
   self:_close_scrollbar()
 

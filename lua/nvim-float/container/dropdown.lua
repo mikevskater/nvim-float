@@ -591,6 +591,23 @@ function EmbeddedDropdown:update_region(row, col, width)
   end
 end
 
+---Hide the dropdown (scroll-sync); closes list if open
+function EmbeddedDropdown:hide()
+  if self._list_open then self:close_list(true) end
+  self._container:hide()
+end
+
+---Show the dropdown (scroll-sync)
+function EmbeddedDropdown:show()
+  self._container:show()
+end
+
+---Check if hidden by scroll sync
+---@return boolean
+function EmbeddedDropdown:is_hidden()
+  return self._container:is_hidden()
+end
+
 ---Close the dropdown
 function EmbeddedDropdown:close()
   if self._list_open then

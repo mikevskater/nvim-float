@@ -251,6 +251,15 @@ function FloatWindow:_setup_autocmds()
     })
   end
 
+  vim.api.nvim_create_autocmd("WinClosed", {
+    group = self._augroup,
+    pattern = tostring(self.winid),
+    once = true,
+    callback = function()
+      self:close()
+    end,
+  })
+
   vim.api.nvim_create_autocmd("VimResized", {
     group = self._augroup,
     callback = function()
@@ -271,6 +280,9 @@ function FloatWindow:is_valid()
 end
 
 function FloatWindow:close()
+  if self._closing then return end
+  self._closing = true
+
   -- Teardown scroll sync before closing containers
   require("nvim-float.container.scroll_sync").teardown(self)
 
