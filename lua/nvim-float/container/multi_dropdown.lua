@@ -55,6 +55,11 @@ function EmbeddedMultiDropdown.new(config)
   self._list_winid = nil
   self._pending_values = nil
   self._list_autocmd_group = nil
+  self._filter_text = ""
+  self._filtered_options = vim.deepcopy(self._options)
+  self._filter_winid = nil
+  self._filter_bufnr = nil
+  self._filter_autocmd_group = nil
 
   -- Create the display container (1 line showing current selection summary)
   self._container = EmbeddedContainer.new({
@@ -155,8 +160,10 @@ function EmbeddedMultiDropdown:open_list()
   if self._list_open then return end
   self._list_open = true
   self._pending_values = vim.deepcopy(self._values)
+  self._filter_text = ""
+  self._filtered_options = vim.deepcopy(self._options)
 
-  local list_height = math.min(#self._options, self._max_height)
+  local list_height = math.min(#self._filtered_options, self._max_height)
   list_height = math.max(list_height, 1)
 
   -- Create list buffer
@@ -199,9 +206,14 @@ function EmbeddedMultiDropdown:open_list()
   vim.api.nvim_create_autocmd("BufLeave", {
     group = self._list_autocmd_group,
     buffer = self._list_bufnr,
-    once = true,
     callback = function()
       vim.schedule(function()
+        -- Don't close if focus moved to our own filter window
+        if self._filter_winid and vim.api.nvim_win_is_valid(self._filter_winid) then
+          if vim.api.nvim_get_current_win() == self._filter_winid then
+            return
+          end
+        end
         self:close_list(true)
       end)
     end,
@@ -213,6 +225,11 @@ end
 function EmbeddedMultiDropdown:close_list(cancel)
   if not self._list_open then return end
   self._list_open = false
+
+  -- Close filter if open
+  if self._filter_winid and vim.api.nvim_win_is_valid(self._filter_winid) then
+    self:_close_filter(true)
+  end
 
   -- Clean up autocmds
   if self._list_autocmd_group then
@@ -274,7 +291,7 @@ function EmbeddedMultiDropdown:_render_list()
     pending_set[v] = true
   end
 
-  for _, opt in ipairs(self._options) do
+  for _, opt in ipairs(self._filtered_options) do
     local checked = pending_set[opt.value]
     local prefix = checked and CHECK_ON or CHECK_OFF
     local line = prefix .. opt.label
@@ -285,7 +302,7 @@ function EmbeddedMultiDropdown:_render_list()
   end
 
   if #lines == 0 then
-    lines = { " (no options)" }
+    lines = { " (no matches)" }
   end
 
   vim.api.nvim_set_option_value('modifiable', true, { buf = self._list_bufnr })
@@ -295,7 +312,7 @@ function EmbeddedMultiDropdown:_render_list()
   -- Highlights
   local ns = vim.api.nvim_create_namespace("nvim_float_multi_dropdown_list_" .. self.key)
   vim.api.nvim_buf_clear_namespace(self._list_bufnr, ns, 0, -1)
-  for i, opt in ipairs(self._options) do
+  for i, opt in ipairs(self._filtered_options) do
     if pending_set[opt.value] then
       pcall(vim.api.nvim_buf_add_highlight, self._list_bufnr, ns, "NvimFloatToggleOn", i - 1, 0, CHECK_WIDTH)
     else
@@ -314,7 +331,7 @@ function EmbeddedMultiDropdown:_toggle_at_cursor()
 
   local cursor = vim.api.nvim_win_get_cursor(self._list_winid)
   local idx = cursor[1]
-  local option = self._options[idx]
+  local option = self._filtered_options[idx]
   if not option then return end
 
   -- Toggle in pending_values
@@ -336,17 +353,201 @@ end
 function EmbeddedMultiDropdown:_toggle_all()
   if not self._list_open or not self._pending_values then return end
 
-  -- If all selected, deselect all. Otherwise select all.
-  if #self._pending_values >= #self._options then
-    self._pending_values = {}
+  -- Check if all visible (filtered) options are currently selected
+  local pending_set = {}
+  for _, v in ipairs(self._pending_values) do pending_set[v] = true end
+
+  local all_visible_selected = true
+  for _, opt in ipairs(self._filtered_options) do
+    if not pending_set[opt.value] then
+      all_visible_selected = false
+      break
+    end
+  end
+
+  if all_visible_selected then
+    -- Deselect all visible options (keep non-visible selections)
+    local filtered_set = {}
+    for _, opt in ipairs(self._filtered_options) do filtered_set[opt.value] = true end
+    local kept = {}
+    for _, v in ipairs(self._pending_values) do
+      if not filtered_set[v] then
+        table.insert(kept, v)
+      end
+    end
+    self._pending_values = kept
   else
-    self._pending_values = {}
-    for _, opt in ipairs(self._options) do
-      table.insert(self._pending_values, opt.value)
+    -- Select all visible options (keep existing selections)
+    for _, opt in ipairs(self._filtered_options) do
+      if not pending_set[opt.value] then
+        table.insert(self._pending_values, opt.value)
+      end
     end
   end
 
   self:_render_list()
+end
+
+-- ============================================================================
+-- Filtering
+-- ============================================================================
+
+---Update filter text and re-render the list
+---@param text string?
+function EmbeddedMultiDropdown:_update_filter(text)
+  self._filter_text = text or ""
+  if self._filter_text == "" then
+    self._filtered_options = vim.deepcopy(self._options)
+  else
+    self._filtered_options = {}
+    local pattern = self._filter_text:lower()
+    for _, opt in ipairs(self._options) do
+      if opt.label:lower():find(pattern, 1, true) then
+        table.insert(self._filtered_options, opt)
+      end
+    end
+  end
+
+  self:_render_list()
+  self:_resize_list()
+  self:_clamp_list_cursor()
+end
+
+---Resize list window to fit filtered results
+function EmbeddedMultiDropdown:_resize_list()
+  if not self._list_winid or not vim.api.nvim_win_is_valid(self._list_winid) then return end
+  local new_height = math.min(math.max(#self._filtered_options, 1), self._max_height)
+  vim.api.nvim_win_set_config(self._list_winid, {
+    relative = "win",
+    win = self._container.winid,
+    row = 1,
+    col = 0,
+    width = self._config.width,
+    height = new_height,
+  })
+end
+
+---Clamp list cursor to valid range
+function EmbeddedMultiDropdown:_clamp_list_cursor()
+  if not self._list_winid or not vim.api.nvim_win_is_valid(self._list_winid) then return end
+  if not self._list_bufnr or not vim.api.nvim_buf_is_valid(self._list_bufnr) then return end
+  local line_count = vim.api.nvim_buf_line_count(self._list_bufnr)
+  if line_count > 0 then
+    local cursor = vim.api.nvim_win_get_cursor(self._list_winid)
+    if cursor[1] > line_count then
+      vim.api.nvim_win_set_cursor(self._list_winid, { line_count, 0 })
+    end
+  end
+end
+
+---Clear filter text and reset list
+function EmbeddedMultiDropdown:_clear_filter()
+  self:_update_filter("")
+end
+
+---Open filter input floating above the list
+function EmbeddedMultiDropdown:_open_filter()
+  if not self._list_winid or not vim.api.nvim_win_is_valid(self._list_winid) then return end
+  if self._filter_winid and vim.api.nvim_win_is_valid(self._filter_winid) then return end
+
+  -- Create filter buffer
+  self._filter_bufnr = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_option_value('buftype', 'nofile', { buf = self._filter_bufnr })
+  vim.api.nvim_set_option_value('bufhidden', 'wipe', { buf = self._filter_bufnr })
+  vim.api.nvim_set_option_value('swapfile', false, { buf = self._filter_bufnr })
+
+  -- Open 1-line window above the list
+  local Config = require("nvim-float.window.config")
+  self._filter_winid = vim.api.nvim_open_win(self._filter_bufnr, true, {
+    relative = "win",
+    win = self._list_winid,
+    row = -2,
+    col = -1,
+    width = self._config.width,
+    height = 1,
+    zindex = Config.ZINDEX.DROPDOWN + 1,
+    border = "rounded",
+    style = "minimal",
+    focusable = true,
+  })
+
+  vim.api.nvim_set_option_value('winhighlight',
+    'Normal:Normal,FloatBorder:NvimFloatBorder',
+    { win = self._filter_winid })
+
+  -- Set placeholder
+  vim.api.nvim_buf_set_lines(self._filter_bufnr, 0, -1, false, { "Type to filter..." })
+
+  -- Setup keymaps on filter buffer
+  local fopts = { buffer = self._filter_bufnr, noremap = true, silent = true }
+
+  -- Normal mode: i or Enter to start typing (clears placeholder)
+  vim.keymap.set('n', 'i', function()
+    vim.api.nvim_buf_set_lines(self._filter_bufnr, 0, -1, false, { "" })
+    vim.cmd('startinsert')
+  end, fopts)
+
+  vim.keymap.set('n', '<CR>', function()
+    vim.api.nvim_buf_set_lines(self._filter_bufnr, 0, -1, false, { "" })
+    vim.cmd('startinsert')
+  end, fopts)
+
+  -- Insert mode: Enter confirms filter and returns to list
+  vim.keymap.set('i', '<CR>', function()
+    vim.cmd('stopinsert')
+    self:_close_filter(false)
+  end, fopts)
+
+  -- Normal mode: Esc closes filter, clears filter text, returns to list
+  vim.keymap.set('n', '<Esc>', function()
+    self:_close_filter(true)
+  end, fopts)
+
+  -- Insert mode: Esc goes to normal mode in filter
+  vim.keymap.set('i', '<Esc>', function()
+    vim.cmd('stopinsert')
+  end, fopts)
+
+  -- Setup autocmds for live filtering
+  self._filter_autocmd_group = vim.api.nvim_create_augroup(
+    "NvimFloatMultiDropdownFilter_" .. self.key, { clear = true })
+
+  vim.api.nvim_create_autocmd({ "TextChangedI", "TextChanged" }, {
+    group = self._filter_autocmd_group,
+    buffer = self._filter_bufnr,
+    callback = function()
+      local lines = vim.api.nvim_buf_get_lines(self._filter_bufnr, 0, 1, false)
+      local text = lines[1] or ""
+      self:_update_filter(text)
+    end,
+  })
+end
+
+---Close the filter input
+---@param clear boolean? If true, reset filter text
+function EmbeddedMultiDropdown:_close_filter(clear)
+  -- Clean up autocmds
+  if self._filter_autocmd_group then
+    pcall(vim.api.nvim_del_augroup_by_id, self._filter_autocmd_group)
+    self._filter_autocmd_group = nil
+  end
+
+  -- Close filter window
+  if self._filter_winid and vim.api.nvim_win_is_valid(self._filter_winid) then
+    vim.api.nvim_win_close(self._filter_winid, true)
+  end
+  self._filter_winid = nil
+  self._filter_bufnr = nil
+
+  -- Reset filter if requested
+  if clear then
+    self:_update_filter("")
+  end
+
+  -- Return focus to list
+  if self._list_winid and vim.api.nvim_win_is_valid(self._list_winid) then
+    vim.api.nvim_set_current_win(self._list_winid)
+  end
 end
 
 -- ============================================================================
@@ -392,6 +593,10 @@ function EmbeddedMultiDropdown:_setup_list_keymaps()
     local prev_row = cursor[1] > 1 and cursor[1] - 1 or line_count
     vim.api.nvim_win_set_cursor(self._list_winid, { prev_row, 0 })
   end, vim.tbl_extend('force', opts, { desc = "Previous option" }))
+
+  -- Filter via /
+  vim.keymap.set('n', '/', function() self:_open_filter() end,
+    vim.tbl_extend('force', opts, { desc = "Open filter" }))
 end
 
 -- ============================================================================

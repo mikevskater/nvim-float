@@ -49,6 +49,19 @@ function M.render_panel(state, panel_name, opts)
   panel.float:update_lines(lines)
   apply_all_highlights()
 
+  -- Recreate embedded containers from stored ContentBuilder
+  local cb = panel.float._content_builder
+  if cb and cb.get_containers and cb:get_containers() then
+    if panel.float._container_manager then
+      panel.float._container_manager:close_all()
+    end
+    if panel.float._embedded_input_manager then
+      panel.float._embedded_input_manager:close_all()
+    end
+    panel.float._navigation_regions = nil
+    panel.float:_create_containers_from_builder(cb)
+  end
+
   -- Set cursor position if specified
   if opts and opts.cursor_row then
     panel.float:set_cursor(opts.cursor_row, opts.cursor_col or 0)

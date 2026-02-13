@@ -505,21 +505,24 @@ function ContentBuilder:embedded_input(key, opts)
     self._containers = {}
   end
 
-  local start_row = #self._lines
+  local container_row
+  local container_col = opts.col
 
-  -- If a label is provided, add a label line before the input
   if opts.label then
     get_lines().styled(self, opts.label, "label")
-    start_row = #self._lines
+    container_row = #self._lines - 1 -- 0-indexed: the label line we just added
+    if not container_col then
+      container_col = #opts.label -- position container right after label text
+    end
+  else
+    container_row = #self._lines -- 0-indexed: the blank line about to be added
+    table.insert(self._lines, { text = "", highlights = {} })
   end
-
-  -- Insert 1 blank placeholder line for the input
-  table.insert(self._lines, { text = "", highlights = {} })
 
   self._containers[key] = {
     type = "embedded_input",
-    row = start_row,
-    col = opts.col, -- nil = auto-center
+    row = container_row,
+    col = container_col, -- nil = auto-center (only when no label)
     width = opts.width,
     placeholder = opts.placeholder,
     value = opts.value,
@@ -541,20 +544,24 @@ function ContentBuilder:embedded_dropdown(key, opts)
     self._containers = {}
   end
 
-  local start_row = #self._lines
+  local container_row
+  local container_col = opts.col
 
   if opts.label then
     get_lines().styled(self, opts.label, "label")
-    start_row = #self._lines
+    container_row = #self._lines - 1 -- 0-indexed: the label line we just added
+    if not container_col then
+      container_col = #opts.label -- position container right after label text
+    end
+  else
+    container_row = #self._lines -- 0-indexed: the blank line about to be added
+    table.insert(self._lines, { text = "", highlights = {} })
   end
-
-  -- Insert 1 blank placeholder line for the dropdown display
-  table.insert(self._lines, { text = "", highlights = {} })
 
   self._containers[key] = {
     type = "embedded_dropdown",
-    row = start_row,
-    col = opts.col, -- nil = auto-center
+    row = container_row,
+    col = container_col, -- nil = auto-center (only when no label)
     width = opts.width,
     options = opts.options,
     selected = opts.selected,
@@ -577,20 +584,24 @@ function ContentBuilder:embedded_multi_dropdown(key, opts)
     self._containers = {}
   end
 
-  local start_row = #self._lines
+  local container_row
+  local container_col = opts.col
 
   if opts.label then
     get_lines().styled(self, opts.label, "label")
-    start_row = #self._lines
+    container_row = #self._lines - 1 -- 0-indexed: the label line we just added
+    if not container_col then
+      container_col = #opts.label -- position container right after label text
+    end
+  else
+    container_row = #self._lines -- 0-indexed: the blank line about to be added
+    table.insert(self._lines, { text = "", highlights = {} })
   end
-
-  -- Insert 1 blank placeholder line for the multi-dropdown display
-  table.insert(self._lines, { text = "", highlights = {} })
 
   self._containers[key] = {
     type = "embedded_multi_dropdown",
-    row = start_row,
-    col = opts.col, -- nil = auto-center
+    row = container_row,
+    col = container_col, -- nil = auto-center (only when no label)
     width = opts.width,
     options = opts.options,
     selected = opts.selected,

@@ -216,9 +216,14 @@ function EmbeddedDropdown:open_list()
   vim.api.nvim_create_autocmd("BufLeave", {
     group = self._list_autocmd_group,
     buffer = self._list_bufnr,
-    once = true,
     callback = function()
       vim.schedule(function()
+        -- Don't close if focus moved to our own filter window
+        if self._filter_winid and vim.api.nvim_win_is_valid(self._filter_winid) then
+          if vim.api.nvim_get_current_win() == self._filter_winid then
+            return
+          end
+        end
         self:close_list(true)
       end)
     end,
