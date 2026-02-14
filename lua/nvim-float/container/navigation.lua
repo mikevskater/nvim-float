@@ -9,6 +9,73 @@
 local M = {}
 
 -- ============================================================================
+-- UTF-8 Aware Column Helpers
+-- ============================================================================
+
+---Get the byte offset of the next character after the one at byte_col.
+---@param line string Buffer line text
+---@param byte_col number 0-indexed byte offset of current character
+---@return number byte offset of next character, or -1 if at/past end
+local function next_char_col(line, byte_col)
+  if byte_col >= #line then return -1 end
+  local char_idx = vim.fn.charidx(line, byte_col)
+  return vim.fn.byteidx(line, char_idx + 1)
+end
+
+---Get the byte offset of the character before the one at byte_col.
+---@param line string Buffer line text
+---@param byte_col number 0-indexed byte offset of current character
+---@return number byte offset of previous character, or -1 if at/before start
+local function prev_char_col(line, byte_col)
+  if byte_col <= 0 then return -1 end
+  local char_idx = vim.fn.charidx(line, byte_col)
+  if char_idx <= 0 then return -1 end
+  return vim.fn.byteidx(line, char_idx - 1)
+end
+
+---Get the byte offset of the last character in a line.
+---@param line string Buffer line text
+---@return number byte offset of last character, or 0 if empty
+local function last_char_col(line)
+  if #line == 0 then return 0 end
+  local n = vim.fn.strchars(line)
+  if n <= 0 then return 0 end
+  return vim.fn.byteidx(line, n - 1)
+end
+
+---Convert a 0-indexed byte column to a 0-indexed display (cell) column.
+---Handles multi-byte UTF-8 characters that occupy 1 display cell but multiple bytes.
+---@param line string Buffer line text
+---@param byte_col number 0-indexed byte offset
+---@return number 0-indexed display column
+local function byte_to_displaycol(line, byte_col)
+  if byte_col <= 0 or #line == 0 then return 0 end
+  byte_col = math.min(byte_col, #line)
+  return vim.fn.strdisplaywidth(line:sub(1, byte_col))
+end
+
+---Convert a 0-indexed display (cell) column to a 0-indexed byte column.
+---@param line string Buffer line text
+---@param dcol number 0-indexed display column
+---@return number 0-indexed byte offset
+local function displaycol_to_byte(line, dcol)
+  if dcol <= 0 or #line == 0 then return 0 end
+  local n = vim.fn.strchars(line)
+  local width_so_far = 0
+  for i = 0, n - 1 do
+    if width_so_far >= dcol then
+      return vim.fn.byteidx(line, i)
+    end
+    local byte_start = vim.fn.byteidx(line, i)
+    local byte_end = vim.fn.byteidx(line, i + 1)
+    if byte_end < 0 then byte_end = #line end
+    local ch = line:sub(byte_start + 1, byte_end)
+    width_so_far = width_so_far + vim.fn.strdisplaywidth(ch)
+  end
+  return #line
+end
+
+-- ============================================================================
 -- 1. Movement Key Detection
 -- ============================================================================
 
@@ -83,8 +150,9 @@ local function pad_container_rows(fw, regions)
   for r, target in pairs(row_pad_targets) do
     local lines = vim.api.nvim_buf_get_lines(fw.bufnr, r, r + 1, false)
     local line = lines[1] or ""
-    if #line < target then
-      vim.api.nvim_buf_set_lines(fw.bufnr, r, r + 1, false, { line .. string.rep(" ", target - #line) })
+    local dw = vim.fn.strdisplaywidth(line)
+    if dw < target then
+      vim.api.nvim_buf_set_lines(fw.bufnr, r, r + 1, false, { line .. string.rep(" ", target - dw) })
     end
   end
 
@@ -293,9 +361,9 @@ local function can_exit_to(fw, regions, parent_row0, parent_col0)
   -- Another container at target? Always valid (container-to-container transfer)
   local target_r = find_region_at(regions, parent_row0, parent_col0)
   if target_r and not target_r.container:is_hidden() then return true end
-  -- Check parent line has content at target col
+  -- Check parent line has content at target col (parent_col0 is a display column)
   local line = vim.api.nvim_buf_get_lines(fw.bufnr, parent_row0, parent_row0 + 1, false)[1] or ""
-  return parent_col0 < #line
+  return parent_col0 < vim.fn.strdisplaywidth(line)
 end
 
 -- ============================================================================
@@ -343,7 +411,10 @@ local function enter_container(fw, region, cursor_row, cursor_col)
     local line = vim.api.nvim_buf_get_lines(
       region.container.bufnr, cursor_row - 1, cursor_row, false
     )[1] or ""
-    cursor_col = math.max(0, math.min(cursor_col, math.max(0, #line - 1)))
+    -- cursor_col is a display column — clamp then convert to byte offset
+    local line_dcols = vim.fn.strdisplaywidth(line)
+    cursor_col = math.max(0, math.min(cursor_col, math.max(0, line_dcols - 1)))
+    cursor_col = displaycol_to_byte(line, cursor_col)
     vim.api.nvim_win_set_cursor(winid, { cursor_row, cursor_col })
   end
 
@@ -412,7 +483,7 @@ local function setup_parent_keymaps(fw, regions, nav_keys)
 
       local cursor = vim.api.nvim_win_get_cursor(fw.winid)
       local row1 = cursor[1]     -- 1-indexed
-      local col0 = cursor[2]     -- 0-indexed
+      local col0 = cursor[2]     -- 0-indexed byte offset
       local target_row0 = row1   -- row1 + 1 in 1-indexed = row1 in 0-indexed
 
       local line_count = vim.api.nvim_buf_line_count(fw.bufnr)
@@ -421,21 +492,21 @@ local function setup_parent_keymaps(fw, regions, nav_keys)
         return
       end
 
-      local region = find_region_at(regions, target_row0, col0)
+      -- Convert byte offset to display column for spatial reasoning
+      local cur_line = vim.api.nvim_buf_get_lines(fw.bufnr, row1 - 1, row1, false)[1] or ""
+      local dcol = byte_to_displaycol(cur_line, col0)
+
+      local region = find_region_at(regions, target_row0, dcol)
       if region and not region.container:is_hidden() then
         -- Enter at top of container content (offset by border)
         local content_row = target_row0 - region.row - region.border_top + 1
-        local content_col = math.max(0, col0 - region.col - region.border_left)
+        local content_col = math.max(0, dcol - region.col - region.border_left)
         enter_container(fw, region, content_row, content_col)
       else
-        -- Check if target row is covered by a region at all (but col is outside)
-        local row_region = find_region_on_row(regions, target_row0)
-        if row_region then
-          -- On a container row but col is on padding - just move there
-          pcall(vim.api.nvim_win_set_cursor, fw.winid, { target_row0 + 1, col0 })
-        else
-          pcall(vim.api.nvim_win_set_cursor, fw.winid, { target_row0 + 1, col0 })
-        end
+        -- Convert display column to byte offset on target row
+        local target_line = vim.api.nvim_buf_get_lines(fw.bufnr, target_row0, target_row0 + 1, false)[1] or ""
+        local target_byte = displaycol_to_byte(target_line, dcol)
+        pcall(vim.api.nvim_win_set_cursor, fw.winid, { target_row0 + 1, target_byte })
       end
 
       vim.schedule(function() fw._navigating = false end)
@@ -459,14 +530,21 @@ local function setup_parent_keymaps(fw, regions, nav_keys)
         return
       end
 
-      local region = find_region_at(regions, target_row0, col0)
+      -- Convert byte offset to display column for spatial reasoning
+      local cur_line = vim.api.nvim_buf_get_lines(fw.bufnr, row1 - 1, row1, false)[1] or ""
+      local dcol = byte_to_displaycol(cur_line, col0)
+
+      local region = find_region_at(regions, target_row0, dcol)
       if region and not region.container:is_hidden() then
         -- Enter at appropriate content row (offset by border)
         local content_row = target_row0 - region.row - region.border_top + 1
-        local content_col = math.max(0, col0 - region.col - region.border_left)
+        local content_col = math.max(0, dcol - region.col - region.border_left)
         enter_container(fw, region, content_row, content_col)
       else
-        pcall(vim.api.nvim_win_set_cursor, fw.winid, { target_row0 + 1, col0 })
+        -- Convert display column to byte offset on target row
+        local target_line = vim.api.nvim_buf_get_lines(fw.bufnr, target_row0, target_row0 + 1, false)[1] or ""
+        local target_byte = displaycol_to_byte(target_line, dcol)
+        pcall(vim.api.nvim_win_set_cursor, fw.winid, { target_row0 + 1, target_byte })
       end
 
       vim.schedule(function() fw._navigating = false end)
@@ -483,20 +561,25 @@ local function setup_parent_keymaps(fw, regions, nav_keys)
       local cursor = vim.api.nvim_win_get_cursor(fw.winid)
       local row1 = cursor[1]
       local col0 = cursor[2]
-      local target_col0 = col0 + 1
       local row0 = row1 - 1
+      local line = vim.api.nvim_buf_get_lines(fw.bufnr, row0, row0 + 1, false)[1] or ""
+      local target_col0 = next_char_col(line, col0)
 
-      local region = find_region_at(regions, row0, target_col0)
+      if target_col0 < 0 then
+        vim.schedule(function() fw._navigating = false end)
+        return
+      end
+
+      -- Convert byte offset to display column for region lookup
+      local target_dcol = byte_to_displaycol(line, target_col0)
+
+      local region = find_region_at(regions, row0, target_dcol)
       if region and not region.container:is_hidden() then
         local content_row = row0 - region.row - region.border_top + 1
-        local content_col = math.max(0, target_col0 - region.col - region.border_left)
+        local content_col = math.max(0, target_dcol - region.col - region.border_left)
         enter_container(fw, region, content_row, content_col)
       else
-        -- Normal movement
-        local line = vim.api.nvim_buf_get_lines(fw.bufnr, row0, row0 + 1, false)[1] or ""
-        if target_col0 < #line then
-          pcall(vim.api.nvim_win_set_cursor, fw.winid, { row1, target_col0 })
-        end
+        pcall(vim.api.nvim_win_set_cursor, fw.winid, { row1, target_col0 })
       end
 
       vim.schedule(function() fw._navigating = false end)
@@ -513,18 +596,22 @@ local function setup_parent_keymaps(fw, regions, nav_keys)
       local cursor = vim.api.nvim_win_get_cursor(fw.winid)
       local row1 = cursor[1]
       local col0 = cursor[2]
-      local target_col0 = col0 - 1
       local row0 = row1 - 1
+      local line = vim.api.nvim_buf_get_lines(fw.bufnr, row0, row0 + 1, false)[1] or ""
+      local target_col0 = prev_char_col(line, col0)
 
       if target_col0 < 0 then
         vim.schedule(function() fw._navigating = false end)
         return
       end
 
-      local region = find_region_at(regions, row0, target_col0)
+      -- Convert byte offset to display column for region lookup
+      local target_dcol = byte_to_displaycol(line, target_col0)
+
+      local region = find_region_at(regions, row0, target_dcol)
       if region and not region.container:is_hidden() then
         local content_row = row0 - region.row - region.border_top + 1
-        local content_col = math.max(0, target_col0 - region.col - region.border_left)
+        local content_col = math.max(0, target_dcol - region.col - region.border_left)
         enter_container(fw, region, content_row, content_col)
       else
         pcall(vim.api.nvim_win_set_cursor, fw.winid, { row1, target_col0 })
@@ -552,15 +639,15 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
 
   ---Transfer to another container or exit to parent at a target position.
   ---@param target_row0 number 0-indexed row in parent
-  ---@param target_col0 number 0-indexed col in parent
-  local function exit_to(target_row0, target_col0)
+  ---@param target_dcol number 0-indexed display column in parent
+  local function exit_to(target_row0, target_dcol)
     -- Check if target hits another container
-    local target_region = find_region_at(regions, target_row0, target_col0)
+    local target_region = find_region_at(regions, target_row0, target_dcol)
     if target_region and target_region.name ~= region.name and not target_region.container:is_hidden() then
       -- Direct container-to-container transfer
       blur_current_container(fw)
       local local_row = target_row0 - target_region.row - target_region.border_top + 1
-      local local_col = math.max(0, target_col0 - target_region.col - target_region.border_left)
+      local local_col = math.max(0, target_dcol - target_region.col - target_region.border_left)
       enter_container(fw, target_region, local_row, local_col)
       return
     end
@@ -572,16 +659,18 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
       local line_count = vim.api.nvim_buf_line_count(fw.bufnr)
 
       -- If target is still on a visible container region, snap to safety
-      local snap_r = find_region_at(regions, target_row0, target_col0)
+      local snap_r = find_region_at(regions, target_row0, target_dcol)
       if snap_r and not snap_r.container:is_hidden() then
         target_row0 = find_nearest_safe_row(regions, target_row0, line_count)
       end
 
       local clamped_row = math.max(0, math.min(target_row0, line_count - 1))
       local line = vim.api.nvim_buf_get_lines(fw.bufnr, clamped_row, clamped_row + 1, false)[1] or ""
-      local clamped_col = math.max(0, math.min(target_col0, math.max(0, #line - 1)))
+      local line_dcols = vim.fn.strdisplaywidth(line)
+      local clamped_dcol = math.max(0, math.min(target_dcol, math.max(0, line_dcols - 1)))
+      local clamped_byte = displaycol_to_byte(line, clamped_dcol)
       fw._navigating = true
-      pcall(vim.api.nvim_win_set_cursor, fw.winid, { clamped_row + 1, clamped_col })
+      pcall(vim.api.nvim_win_set_cursor, fw.winid, { clamped_row + 1, clamped_byte })
       vim.schedule(function() fw._navigating = false end)
     end
   end
@@ -597,15 +686,21 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
 
       if crow1 >= line_count then
         -- At last row -> exit downward
+        local cur_line = vim.api.nvim_buf_get_lines(c.bufnr, crow1 - 1, crow1, false)[1] or ""
+        local dcol = byte_to_displaycol(cur_line, ccol0)
         local parent_row0 = region.row + region.visual_height  -- row just below bottom border
-        local parent_col0 = region.col + region.border_left + ccol0
+        local parent_dcol = region.col + region.border_left + dcol
         local buf_lines = vim.api.nvim_buf_line_count(fw.bufnr)
         if parent_row0 >= 0 and parent_row0 < buf_lines then
-          exit_to(parent_row0, parent_col0)
+          exit_to(parent_row0, parent_dcol)
         end
       else
-        -- Normal movement within container
-        pcall(vim.api.nvim_win_set_cursor, c.winid, { crow1 + 1, ccol0 })
+        -- Normal movement within container (preserve display column)
+        local cur_line = vim.api.nvim_buf_get_lines(c.bufnr, crow1 - 1, crow1, false)[1] or ""
+        local dcol = byte_to_displaycol(cur_line, ccol0)
+        local next_line = vim.api.nvim_buf_get_lines(c.bufnr, crow1, crow1 + 1, false)[1] or ""
+        local target_byte = displaycol_to_byte(next_line, dcol)
+        pcall(vim.api.nvim_win_set_cursor, c.winid, { crow1 + 1, target_byte })
       end
     end, opts)
   end
@@ -620,14 +715,21 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
 
       if crow1 <= 1 then
         -- At first row -> exit upward
+        local cur_line = vim.api.nvim_buf_get_lines(c.bufnr, crow1 - 1, crow1, false)[1] or ""
+        local dcol = byte_to_displaycol(cur_line, ccol0)
         local parent_row0 = region.row - 1  -- row just above top border
-        local parent_col0 = region.col + region.border_left + ccol0
+        local parent_dcol = region.col + region.border_left + dcol
         local buf_lines = vim.api.nvim_buf_line_count(fw.bufnr)
         if parent_row0 >= 0 and parent_row0 < buf_lines then
-          exit_to(parent_row0, parent_col0)
+          exit_to(parent_row0, parent_dcol)
         end
       else
-        pcall(vim.api.nvim_win_set_cursor, c.winid, { crow1 - 1, ccol0 })
+        -- Normal movement within container (preserve display column)
+        local cur_line = vim.api.nvim_buf_get_lines(c.bufnr, crow1 - 1, crow1, false)[1] or ""
+        local dcol = byte_to_displaycol(cur_line, ccol0)
+        local prev_line = vim.api.nvim_buf_get_lines(c.bufnr, crow1 - 2, crow1 - 1, false)[1] or ""
+        local target_byte = displaycol_to_byte(prev_line, dcol)
+        pcall(vim.api.nvim_win_set_cursor, c.winid, { crow1 - 1, target_byte })
       end
     end, opts)
   end
@@ -640,7 +742,7 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
       local crow1 = cursor[1]
       local ccol0 = cursor[2]
       local line = vim.api.nvim_buf_get_lines(c.bufnr, crow1 - 1, crow1, false)[1] or ""
-      local line_end = math.max(0, #line - 1)
+      local line_end = last_char_col(line)
 
       if ccol0 >= line_end then
         -- At end of line -> exit right
@@ -652,7 +754,10 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
           exit_to(parent_row0, parent_col0)
         end
       else
-        pcall(vim.api.nvim_win_set_cursor, c.winid, { crow1, ccol0 + 1 })
+        local next_col = next_char_col(line, ccol0)
+        if next_col >= 0 then
+          pcall(vim.api.nvim_win_set_cursor, c.winid, { crow1, next_col })
+        end
       end
     end, opts)
   end
@@ -664,6 +769,7 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
       local cursor = vim.api.nvim_win_get_cursor(c.winid)
       local crow1 = cursor[1]
       local ccol0 = cursor[2]
+      local line = vim.api.nvim_buf_get_lines(c.bufnr, crow1 - 1, crow1, false)[1] or ""
 
       if ccol0 <= 0 then
         -- At col 0 -> exit left
@@ -676,7 +782,10 @@ local function setup_container_exit_keymaps(region, fw, regions, nav_keys)
           exit_to(parent_row0, parent_col0)
         end
       else
-        pcall(vim.api.nvim_win_set_cursor, c.winid, { crow1, ccol0 - 1 })
+        local prev_col = prev_char_col(line, ccol0)
+        if prev_col >= 0 then
+          pcall(vim.api.nvim_win_set_cursor, c.winid, { crow1, prev_col })
+        end
       end
     end, opts)
   end
@@ -715,11 +824,15 @@ local function setup_cursor_guard(fw, regions)
       local row0 = cursor[1] - 1
       local col0 = cursor[2]
 
-      local region = find_region_at(regions, row0, col0)
+      -- Convert byte offset to display column for region lookup
+      local line = vim.api.nvim_buf_get_lines(fw.bufnr, row0, row0 + 1, false)[1] or ""
+      local dcol = byte_to_displaycol(line, col0)
+
+      local region = find_region_at(regions, row0, dcol)
       if region and not region.container:is_hidden() then
         fw._navigating = true
         local content_row = row0 - region.row - region.border_top + 1
-        local content_col = math.max(0, col0 - region.col - region.border_left)
+        local content_col = math.max(0, dcol - region.col - region.border_left)
         enter_container(fw, region, content_row, content_col)
         vim.schedule(function() fw._navigating = false end)
       end

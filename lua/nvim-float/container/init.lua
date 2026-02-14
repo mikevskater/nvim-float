@@ -126,6 +126,10 @@ function EmbeddedContainer.new(config)
   self._border_windows_initialized = false
   self._content_hidden = false
 
+  -- Arrow overlay window (for dropdowns)
+  self._arrow_winid = nil
+  self._arrow_bufnr = nil
+
   -- Scroll-sync state
   self._hidden = false
   self._last_clip_top = 0
@@ -250,6 +254,7 @@ function EmbeddedContainer:hide()
   self:hide_border_left()
   self:hide_border_right()
   win_hide(self._scrollbar_winid)
+  win_hide(self._arrow_winid)
 end
 
 ---Show this container (all components)
@@ -262,6 +267,7 @@ function EmbeddedContainer:show()
   self:show_border_left()
   self:show_border_right()
   win_show(self._scrollbar_winid)
+  win_show(self._arrow_winid)
 end
 
 ---Check if this container is hidden by scroll sync
@@ -277,6 +283,7 @@ function EmbeddedContainer:hide_content()
   self._content_hidden = true
   win_hide(self.winid)
   win_hide(self._scrollbar_winid)
+  win_hide(self._arrow_winid)
 end
 
 function EmbeddedContainer:show_content()
@@ -284,6 +291,7 @@ function EmbeddedContainer:show_content()
   self._content_hidden = false
   win_show(self.winid)
   win_show(self._scrollbar_winid)
+  win_show(self._arrow_winid)
 end
 
 function EmbeddedContainer:hide_border_top()
@@ -738,6 +746,9 @@ function EmbeddedContainer:update_region(row, col, width, height, border)
   if self._scrollbar_winid and vim.api.nvim_win_is_valid(self._scrollbar_winid) then
     self:_reposition_scrollbar()
   end
+
+  -- Reposition arrow
+  self:_reposition_arrow()
 end
 
 ---Scroll to a specific line (1-indexed)
@@ -847,6 +858,72 @@ function EmbeddedContainer:_reposition_scrollbar()
 end
 
 -- ============================================================================
+-- Arrow Overlay Window (private)
+-- ============================================================================
+
+---Create a 1×1 non-focusable window showing ▼ at the last column of this container.
+---Used by dropdown/multi-dropdown so the arrow doesn't occupy buffer space.
+function EmbeddedContainer:_setup_arrow()
+  if self._arrow_winid and vim.api.nvim_win_is_valid(self._arrow_winid) then
+    return
+  end
+
+  -- Create buffer with arrow glyph
+  self._arrow_bufnr = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_option_value('buftype', 'nofile', { buf = self._arrow_bufnr })
+  vim.api.nvim_set_option_value('bufhidden', 'wipe', { buf = self._arrow_bufnr })
+  vim.api.nvim_set_option_value('swapfile', false, { buf = self._arrow_bufnr })
+  vim.api.nvim_set_option_value('modifiable', true, { buf = self._arrow_bufnr })
+  vim.api.nvim_buf_set_lines(self._arrow_bufnr, 0, -1, false, { "\u{25BC}" })
+  vim.api.nvim_set_option_value('modifiable', false, { buf = self._arrow_bufnr })
+
+  -- Open 1×1 window at last column, relative to this container's window
+  self._arrow_winid = vim.api.nvim_open_win(self._arrow_bufnr, false, {
+    relative = "win",
+    win = self.winid,
+    row = 0,
+    col = self._width - 1,
+    width = 1,
+    height = 1,
+    style = "minimal",
+    focusable = false,
+    zindex = self._zindex + 1,
+  })
+
+  vim.api.nvim_set_option_value('wrap', false, { win = self._arrow_winid })
+  vim.api.nvim_set_option_value('winblend', self.config.winblend or 0, { win = self._arrow_winid })
+  vim.api.nvim_set_option_value('winhighlight',
+    'Normal:NvimFloatDropdownArrow,NormalFloat:NvimFloatDropdownArrow', { win = self._arrow_winid })
+end
+
+---Close the arrow overlay window and its buffer.
+function EmbeddedContainer:_close_arrow()
+  if self._arrow_winid and vim.api.nvim_win_is_valid(self._arrow_winid) then
+    vim.api.nvim_win_close(self._arrow_winid, true)
+  end
+  self._arrow_winid = nil
+  if self._arrow_bufnr and vim.api.nvim_buf_is_valid(self._arrow_bufnr) then
+    vim.api.nvim_buf_delete(self._arrow_bufnr, { force = true })
+  end
+  self._arrow_bufnr = nil
+end
+
+---Reposition the arrow overlay to track container width changes.
+function EmbeddedContainer:_reposition_arrow()
+  if not self._arrow_winid or not vim.api.nvim_win_is_valid(self._arrow_winid) then
+    return
+  end
+  vim.api.nvim_win_set_config(self._arrow_winid, {
+    relative = "win",
+    win = self.winid,
+    row = 0,
+    col = self._width - 1,
+    width = 1,
+    height = 1,
+  })
+end
+
+-- ============================================================================
 -- Keymaps (private)
 -- ============================================================================
 
@@ -867,6 +944,9 @@ end
 function EmbeddedContainer:close()
   -- Close border windows
   self:_close_border_windows()
+
+  -- Close arrow
+  self:_close_arrow()
 
   -- Close scrollbar
   self:_close_scrollbar()
