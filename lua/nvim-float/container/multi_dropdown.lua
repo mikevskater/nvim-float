@@ -27,8 +27,7 @@ local EmbeddedContainer = require("nvim-float.container")
 local EmbeddedMultiDropdown = {}
 EmbeddedMultiDropdown.__index = EmbeddedMultiDropdown
 
-local ARROW_CHAR = " \u{25BC}"  -- ▼
-local ARROW_WIDTH = 2
+-- Arrow glyph is rendered by EmbeddedContainer:_setup_arrow()
 local CHECK_ON = "\u{25C9} "    -- ◉
 local CHECK_OFF = "\u{25CB} "   -- ○
 local CHECK_WIDTH = 2
@@ -91,6 +90,9 @@ function EmbeddedMultiDropdown.new(config)
     end, { buffer = self._container.bufnr, noremap = true, silent = true, desc = "Exit multi-dropdown" })
   end
 
+  -- Setup arrow overlay window
+  self._container:_setup_arrow()
+
   -- Render initial display
   self:_render_display()
 
@@ -106,7 +108,6 @@ function EmbeddedMultiDropdown:_render_display()
 
   local bufnr = self._container.bufnr
   local width = self._config.width
-  local text_width = width - ARROW_WIDTH
 
   -- Build display text
   local display
@@ -131,24 +132,20 @@ function EmbeddedMultiDropdown:_render_display()
     display = table.concat(labels, ", ")
   end
 
-  -- Truncate or pad
-  if #display > text_width then
-    display = display:sub(1, text_width)
-  else
-    display = display .. string.rep(" ", text_width - #display)
+  -- Truncate if text exceeds full width (arrow is a separate window)
+  if #display > width then
+    display = display:sub(1, width)
   end
-  display = display .. ARROW_CHAR
 
   vim.api.nvim_set_option_value('modifiable', true, { buf = bufnr })
   vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { display })
   vim.api.nvim_set_option_value('modifiable', false, { buf = bufnr })
 
-  -- Apply highlight
+  -- Apply highlight (arrow is handled by the separate arrow window)
   local ns = vim.api.nvim_create_namespace("nvim_float_multi_dropdown_" .. self.key)
   vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
   local hl_group = is_placeholder and "NvimFloatInputPlaceholder" or "NvimFloatInput"
-  pcall(vim.api.nvim_buf_add_highlight, bufnr, ns, hl_group, 0, 0, text_width)
-  pcall(vim.api.nvim_buf_add_highlight, bufnr, ns, "NvimFloatDropdownArrow", 0, text_width, #display)
+  pcall(vim.api.nvim_buf_add_highlight, bufnr, ns, hl_group, 0, 0, #display)
 end
 
 -- ============================================================================
