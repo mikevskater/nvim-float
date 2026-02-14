@@ -524,6 +524,12 @@ function FloatWindow:render()
   local cb = self._content_builder
   if not cb then return end
 
+  -- Save cursor position before buffer changes (re-render may displace it)
+  local saved_cursor
+  pcall(function()
+    saved_cursor = vim.api.nvim_win_get_cursor(self.winid)
+  end)
+
   local lines = cb:build_lines()
 
   vim.api.nvim_buf_set_option(self.bufnr, 'modifiable', true)
@@ -566,6 +572,15 @@ function FloatWindow:render()
     self:_create_containers_from_builder(cb)
     -- Setup scroll sync after new containers created
     require("nvim-float.container.scroll_sync").setup(self)
+  end
+
+  -- Restore cursor position (clamped to new buffer bounds)
+  if saved_cursor and self:is_valid() then
+    local line_count = vim.api.nvim_buf_line_count(self.bufnr)
+    local row = math.min(saved_cursor[1], line_count)
+    local line = vim.api.nvim_buf_get_lines(self.bufnr, row - 1, row, false)[1] or ""
+    local col = math.min(saved_cursor[2], math.max(0, #line - 1))
+    pcall(vim.api.nvim_win_set_cursor, self.winid, { row, col })
   end
 end
 
@@ -864,6 +879,21 @@ function FloatWindow:focus_container(name)
   end
   if name and self._container_manager then
     return self._container_manager:focus(name)
+  end
+  return false
+end
+
+---Check if any container (virtual or real) is currently focused/active.
+---@return boolean
+function FloatWindow:has_active_container()
+  if self._virtual_manager and self._virtual_manager._active_name then
+    return true
+  end
+  if self._container_manager and self._container_manager._focused_name then
+    return true
+  end
+  if self._embedded_input_manager and self._embedded_input_manager._focused_key then
+    return true
   end
   return false
 end

@@ -2,9 +2,10 @@
 ---@brief VirtualContainerManager - Orchestrates all virtual containers
 ---
 ---Manages the lifecycle of virtual containers: creation, activation/deactivation,
----CursorMoved-based activation (for input types), explicit activation (for
----generic containers), Tab navigation, and unified value API.
----At most 1 container is materialized (has a real window) at any time.
+---CursorMoved-based activation (for all container types), Tab navigation, and
+---unified value API. At most 1 container is materialized (has a real window) at
+---any time. Generic containers auto-activate on single-row movement (j/k) but
+---not on multi-row jumps (Ctrl-D, gg, G).
 
 local VirtualContainer = require("nvim-float.container.virtual")
 local WindowPool = require("nvim-float.container.window_pool")
@@ -40,6 +41,7 @@ function VirtualContainerManager.new(parent_float)
   self._activating = false
   self._pending_cursor = false
   self._pending_render = false
+  self._last_cursor_row = nil
   return self
 end
 
@@ -63,7 +65,8 @@ end
 ---Activate a virtual container (materialize it as a real window).
 ---Deactivates the currently active container first if different.
 ---@param name string Container name to activate
-function VirtualContainerManager:activate(name)
+---@param cursor_row0 number|nil 0-indexed parent row where cursor entered (for positioning in generic containers)
+function VirtualContainerManager:activate(name, cursor_row0)
   if self._activating then return end
 
   local vc = self._virtuals[name]
@@ -109,6 +112,21 @@ function VirtualContainerManager:activate(name)
       else
         vc:get_real_field():focus()
       end
+    end
+  end
+
+  -- Position cursor inside generic container based on entry row
+  if vc.type == "container" and cursor_row0 then
+    local container = vc:get_container()
+    if container and container:is_valid() then
+      local bt = vc._border_top or 0
+      local scroll_offset = vc._state.scroll_offset or 0
+      -- Map parent row → visual offset within container → buffer line
+      local visual_offset = math.max(0, math.min(cursor_row0 - vc._row - bt, vc._inner_height - 1))
+      local internal_row = scroll_offset + visual_offset + 1  -- 1-indexed
+      local max_lines = vim.api.nvim_buf_line_count(container.bufnr)
+      internal_row = math.max(1, math.min(internal_row, max_lines))
+      pcall(vim.api.nvim_win_set_cursor, container.winid, { internal_row, 0 })
     end
   end
 
@@ -232,16 +250,21 @@ function VirtualContainerManager:setup_cursor_tracking()
         local line = vim.api.nvim_buf_get_lines(fw.bufnr, row0, row0 + 1, false)[1] or ""
         local dcol = vim.fn.strdisplaywidth(line:sub(1, col0))
 
-        local target = self:_find_virtual_at(row0, dcol)
+        local target = self:find_virtual_at(row0, dcol)
         if target and target.name ~= self._active_name then
-          self:activate(target.name)
-        elseif not target and self._active_name then
-          -- Only auto-deactivate input-type fields, not generic containers
-          local active_vc = self._virtuals[self._active_name]
-          if active_vc and active_vc.type ~= "container" then
-            self:deactivate()
+          if target.type == "container" then
+            -- Only auto-activate generic containers on single-row movement (j/k)
+            local prev = self._last_cursor_row
+            if prev == nil or math.abs(row0 - prev) > 1 then
+              self._last_cursor_row = row0
+              return  -- Skip: cursor jumped (Ctrl-D, gg, G, etc.)
+            end
           end
+          self:activate(target.name, row0)
+        elseif not target and self._active_name then
+          self:deactivate()
         end
+        self._last_cursor_row = row0
       end)
     end,
   })
@@ -257,15 +280,21 @@ function VirtualContainerManager:setup_cursor_tracking()
   end, vim.tbl_extend('force', opts, { desc = "Previous virtual field" }))
 end
 
----Find which input-type virtual container (if any) covers the given position.
----Skips generic containers (type=="container") since they require explicit activation.
+---Find which virtual container (if any) covers the given position.
+---Input types use single-row check; generic containers use multi-row check.
 ---@param row0 number 0-indexed row
 ---@param dcol number 0-indexed display column
 ---@return VirtualContainer|nil
-function VirtualContainerManager:_find_virtual_at(row0, dcol)
+function VirtualContainerManager:find_virtual_at(row0, dcol)
   for _, vc in pairs(self._virtuals) do
-    -- Skip generic containers: they use explicit activation, not CursorMoved
-    if vc.type ~= "container" then
+    if vc.type == "container" then
+      -- Multi-row hit test for generic containers
+      if row0 >= vc._row and row0 < vc._row + vc._height
+        and dcol >= vc._col and dcol < vc._col + vc._width then
+        return vc
+      end
+    else
+      -- Single-row hit test for input/dropdown types
       if row0 == vc._row and dcol >= vc._col and dcol < vc._col + vc._width then
         return vc
       end

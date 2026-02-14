@@ -75,12 +75,18 @@ function Scrollbar.setup(float)
   Scrollbar.update(float)
 
   -- Setup autocmd to track scrolling in main window
+  float._scrollbar_pending = false
   float._scrollbar_autocmd = vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "WinScrolled" }, {
     buffer = float.bufnr,
     callback = function()
-      if float:is_valid() then
-        Scrollbar.update(float)
-      end
+      if float._scrollbar_pending then return end
+      float._scrollbar_pending = true
+      vim.schedule(function()
+        float._scrollbar_pending = false
+        if float:is_valid() then
+          Scrollbar.update(float)
+        end
+      end)
     end,
   })
 end
@@ -232,6 +238,7 @@ function Scrollbar.close(float)
   float._scrollbar_last_top = nil
   float._scrollbar_last_total = nil
   float._scrollbar_last_content = nil
+  float._scrollbar_pending = nil
 end
 
 ---Reposition scrollbar after window geometry changes (e.g., on resize)

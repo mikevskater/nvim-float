@@ -163,11 +163,12 @@ function VirtualContainer:render_virtual()
   end
 
   -- Build new line: [before_col][display_text][after_end]
+  -- Use byte length of display text (not display width) for correct extraction
   local before = line:sub(1, col)
   local end_byte = col + #display  -- byte offset after our rendered text
   local after = ""
-  if #line > col + width then
-    after = line:sub(col + width + 1)
+  if #line > end_byte then
+    after = line:sub(end_byte + 1)
   end
 
   local new_line = before .. display .. after
@@ -296,10 +297,12 @@ function VirtualContainer:_render_virtual_container()
     end
 
     -- Splice: [before_col][rendered_text][after_end]
+    -- Use byte length of rendered text (not display width) for correct extraction
     local before = line:sub(1, col)
     local after = ""
-    if #line > col + width then
-      after = line:sub(col + width + 1)
+    local rendered_bytes = #rendered
+    if #line > col + rendered_bytes then
+      after = line:sub(col + rendered_bytes + 1)
     end
 
     vim.api.nvim_buf_set_lines(bufnr, row, row + 1, false, { before .. rendered .. after })
@@ -351,6 +354,7 @@ end
 
 ---Apply content highlights from the nested content_builder to the parent buffer.
 ---Offsets highlight positions by container row/col and accounts for scroll.
+---Uses byte widths of border chars (not display columns) for correct positioning.
 function VirtualContainer:_apply_virtual_container_highlights()
   if not self._content_highlights or #self._content_highlights == 0 then return end
 
@@ -360,9 +364,14 @@ function VirtualContainer:_apply_virtual_container_highlights()
   local bufnr = fw.bufnr
   local base_col = self._col
   local bt = self._border_top or 0
-  local bl = self._border_left or 0
   local inner_h = self._inner_height
   local scroll_offset = self._state.scroll_offset
+
+  -- Compute byte width of left border char (not display columns)
+  local bl_bytes = 0
+  if (self._border_left or 0) > 0 and self._border_chars then
+    bl_bytes = #self:_get_border_char(self._border_chars[8])
+  end
 
   for _, hl in ipairs(self._content_highlights) do
     -- hl.line is 0-indexed content line
@@ -370,8 +379,8 @@ function VirtualContainer:_apply_virtual_container_highlights()
     if content_line >= scroll_offset and content_line < scroll_offset + inner_h then
       local visual_row = content_line - scroll_offset
       local parent_row = self._row + bt + visual_row
-      local col_start = base_col + bl + (hl.col_start or 0)
-      local col_end = base_col + bl + (hl.col_end or col_start)
+      local col_start = base_col + bl_bytes + (hl.col_start or 0)
+      local col_end = base_col + bl_bytes + (hl.col_end or col_start)
       if col_end > col_start then
         pcall(vim.api.nvim_buf_add_highlight, bufnr, self._ns, hl.hl_group, parent_row, col_start, col_end)
       end
@@ -506,13 +515,22 @@ function VirtualContainer:materialize(on_deactivate)
 
   self._materialized = true
 
-  -- Clear virtual rendering (all rows for this container)
-  vim.api.nvim_buf_clear_namespace(fw.bufnr, self._ns, self._row, self._row + self._height)
+  -- Convert buffer row to viewport-relative row for child window placement.
+  -- relative='win' positions are relative to the window viewport, not the buffer.
+  local topline = vim.fn.line('w0', fw.winid)
+  local scroll_adj = topline - 1
+
+  -- For input types, clear virtual rendering (real window covers the region).
+  -- For generic containers, keep virtual border/scrollbar extmarks visible
+  -- so the transition is seamless.
+  if self.type ~= "container" then
+    vim.api.nvim_buf_clear_namespace(fw.bufnr, self._ns, self._row, self._row + self._height)
+  end
 
   -- Build config common to all field types
   local config = {
     key = self.name,
-    row = self._row,
+    row = self._row - scroll_adj,
     col = self._col,
     width = self._width,
     parent_winid = fw.winid,
@@ -558,29 +576,38 @@ function VirtualContainer:materialize(on_deactivate)
     self._real_field = EmbeddedMultiDropdown.new(config)
 
   elseif self.type == "container" then
-    -- Create real EmbeddedContainer directly
+    -- Create borderless real container at content area only.
+    -- Virtual border text and scrollbar extmarks stay visible in parent buffer
+    -- for seamless appearance during activation.
     local def = self._definition
-    local border_rows = def.border_rows or 0
-    local border_cols = def.border_cols or 0
-    local content_width = math.max(1, self._width - border_cols)
-    local content_height = math.max(1, self._height - border_rows)
+    local bt = self._border_top or 0
+    local bl = self._border_left or 0
+
+    -- Derive winhighlight: match parent's Normal background for seamless blend
+    local container_whl = def.winhighlight
+    if not container_whl then
+      local parent_whl = fw.config.winhighlight or 'Normal:Normal'
+      local parent_normal = parent_whl:match('Normal:([^,]+)') or 'Normal'
+      container_whl = 'Normal:' .. parent_normal .. ',CursorLine:NvimFloatSelected'
+    end
 
     self._real_field = EmbeddedContainer.new({
       name = self.name,
-      row = self._row,
-      col = self:_resolve_materialized_col(),
-      width = content_width,
-      height = content_height,
+      row = self._row + bt - scroll_adj,
+      col = self._col + bl,
+      width = self._inner_width,
+      height = self._inner_height,
       parent_winid = fw.winid,
       parent_float = fw,
       zindex_offset = def.zindex_offset,
-      border = def.border,
+      border = "none",
       focusable = def.focusable,
-      scrollbar = def.scrollbar,
+      scrollbar = false,
       content_builder = def.content_builder,
       on_focus = def.on_focus,
       on_blur = def.on_blur,
-      winhighlight = def.winhighlight,
+      winhighlight = container_whl,
+      cursorline = false,
     })
 
     -- Restore scroll position
@@ -600,14 +627,6 @@ function VirtualContainer:materialize(on_deactivate)
       end, { buffer = container.bufnr, noremap = true, silent = true, desc = "Deactivate virtual container" })
     end
   end
-end
-
----Resolve the col for a materialized container.
----For containers, _col is the visual col (includes border). When the container
----has a border, EmbeddedContainer.new uses border= so col should match _col.
----@return number
-function VirtualContainer:_resolve_materialized_col()
-  return self._col
 end
 
 ---Sync state from real field, destroy it, re-render as virtual text.
