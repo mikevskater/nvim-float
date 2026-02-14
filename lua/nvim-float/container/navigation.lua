@@ -211,12 +211,14 @@ end
 ---@field field table? The EmbeddedInput/Dropdown/MultiDropdown wrapper (if input-type)
 
 ---Build a sorted list of all container regions within a FloatWindow.
+---When virtual_manager is present, input-type containers are handled by
+---VirtualContainerManager's CursorMoved tracking, so they are excluded here.
 ---@param fw FloatWindow
 ---@return NavRegion[]
 local function build_region_map(fw)
   local regions = {}
 
-  -- From ContainerManager (full containers)
+  -- From ContainerManager (full containers — always included)
   if fw._container_manager then
     local names = fw._container_manager:get_names()
     for _, name in ipairs(names) do
@@ -248,7 +250,8 @@ local function build_region_map(fw)
   end
 
   -- From EmbeddedInputManager (inputs, dropdowns, multi-dropdowns)
-  if fw._embedded_input_manager then
+  -- Skip when virtual manager is handling input-type containers
+  if fw._embedded_input_manager and not fw._virtual_manager then
     for _, entry in ipairs(fw._embedded_input_manager._field_order) do
       local field = fw._embedded_input_manager:get_field(entry.key)
       if field and field:is_valid() then

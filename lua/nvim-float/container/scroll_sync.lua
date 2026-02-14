@@ -360,7 +360,7 @@ function M.sync(fw)
   -- Get parent scroll state
   local topline = vim.fn.line("w0", fw.winid)
   local scroll_row = topline - 1  -- 0-indexed
-  local scroll_col = vim.fn.winsaveview and 0 or 0
+  local scroll_col = 0
   pcall(function()
     local view = vim.api.nvim_win_call(fw.winid, function()
       return vim.fn.winsaveview()
@@ -383,6 +383,22 @@ function M.sync(fw)
   local parent_w = fw._win_width
   local any_focus_lost = false
 
+  -- Virtual mode shortcut: only sync the single active container (O(1))
+  if fw._virtual_manager then
+    local active_vc = fw._virtual_manager:get_active()
+    if active_vc and active_vc:is_materialized() then
+      local c = active_vc:get_container()
+      if c and c:is_valid() then
+        local lost = sync_one(c, scroll_row, scroll_col, parent_h, parent_w)
+        if lost or c:is_hidden() then
+          -- Active container scrolled off-screen: deactivate it
+          fw._virtual_manager:deactivate()
+        end
+      end
+    end
+    -- Virtual text scrolls naturally with the parent buffer, no sync needed
+  end
+
   -- Sync generic containers (ContainerManager)
   if fw._container_manager then
     local names = fw._container_manager:get_names()
@@ -395,8 +411,8 @@ function M.sync(fw)
     end
   end
 
-  -- Sync embedded input-type containers (EmbeddedInputManager)
-  if fw._embedded_input_manager then
+  -- Sync embedded input-type containers (EmbeddedInputManager) — only in non-virtual mode
+  if fw._embedded_input_manager and not fw._virtual_manager then
     fw._embedded_input_manager:for_each_field(function(_key, field, _type)
       local c = field:get_container()
       if c then
@@ -444,14 +460,20 @@ function M.setup(fw)
     "nvim_float_scroll_sync_" .. fw.bufnr, { clear = true })
   fw._scroll_sync_cache = { topline = nil, leftcol = nil }
   fw._scroll_syncing = false
+  fw._pending_scroll = false
 
   vim.api.nvim_create_autocmd("WinScrolled", {
     group = fw._scroll_sync_augroup,
     buffer = fw.bufnr,
     callback = function()
-      if fw:is_valid() and not fw._scroll_syncing then
-        M.sync(fw)
-      end
+      if fw._pending_scroll then return end
+      fw._pending_scroll = true
+      vim.schedule(function()
+        fw._pending_scroll = false
+        if fw:is_valid() and not fw._scroll_syncing then
+          M.sync(fw)
+        end
+      end)
     end,
   })
 
@@ -468,6 +490,7 @@ function M.teardown(fw)
   end
   fw._scroll_sync_cache = nil
   fw._scroll_syncing = nil
+  fw._pending_scroll = nil
 end
 
 return M

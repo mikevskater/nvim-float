@@ -6,7 +6,7 @@ local Geometry = require("nvim-float.window.geometry")
 local Elements = require("nvim-float.window.elements")
 
 -- Lazy-load heavy dependencies
-local _scrollbar, _dialogs, _multipanel, _container_manager
+local _scrollbar, _dialogs, _multipanel, _container_manager, _virtual_container_manager
 
 local function get_scrollbar()
   if not _scrollbar then _scrollbar = require("nvim-float.float.scrollbar") end
@@ -26,6 +26,11 @@ end
 local function get_container_manager()
   if not _container_manager then _container_manager = require("nvim-float.container.manager") end
   return _container_manager
+end
+
+local function get_virtual_container_manager()
+  if not _virtual_container_manager then _virtual_container_manager = require("nvim-float.container.virtual_manager") end
+  return _virtual_container_manager
 end
 
 ---@class FloatWindow
@@ -86,6 +91,7 @@ function UiFloat.create(lines, config)
     _element_tracking_enabled = false,
     _container_manager = nil,
     _embedded_input_manager = nil,
+    _virtual_manager = nil,
   }, FloatWindow)
 
   -- Apply defaults
@@ -286,7 +292,13 @@ function FloatWindow:close()
   -- Teardown scroll sync before closing containers
   require("nvim-float.container.scroll_sync").teardown(self)
 
-  -- Close embedded containers first
+  -- Close virtual containers first
+  if self._virtual_manager then
+    self._virtual_manager:close_all()
+    self._virtual_manager = nil
+  end
+
+  -- Close embedded containers
   if self._container_manager then
     self._container_manager:close_all()
   end
@@ -538,6 +550,11 @@ function FloatWindow:render()
   if cb.get_containers and cb:get_containers() then
     -- Teardown scroll sync before closing old containers
     require("nvim-float.container.scroll_sync").teardown(self)
+    -- Close virtual containers
+    if self._virtual_manager then
+      self._virtual_manager:close_all()
+      self._virtual_manager = nil
+    end
     -- Close existing containers before recreating
     if self._container_manager then
       self._container_manager:close_all()
@@ -817,14 +834,56 @@ function FloatWindow:get_container(name)
   return nil
 end
 
----Focus a container by name (transfer window focus to child)
----@param name string
+---Focus a container by name (transfer window focus to child).
+---If name is nil, auto-detects which container the cursor is on.
+---@param name string|nil
 ---@return boolean success
 function FloatWindow:focus_container(name)
-  if self._container_manager then
+  -- Auto-detect: find the container under the cursor
+  if name == nil and self._virtual_manager and self:is_valid() then
+    local cursor = vim.api.nvim_win_get_cursor(self.winid)
+    local row0 = cursor[1] - 1
+    local col0 = cursor[2]
+    local line = vim.api.nvim_buf_get_lines(self.bufnr, row0, row0 + 1, false)[1] or ""
+    local dcol = vim.fn.strdisplaywidth(line:sub(1, col0))
+    local vc = self._virtual_manager:find_container_at(row0, dcol)
+    if vc then
+      self._virtual_manager:activate(vc.name)
+      return true
+    end
+    return false
+  end
+
+  -- Named lookup
+  if name and self._virtual_manager then
+    local vc = self._virtual_manager:get(name)
+    if vc then
+      self._virtual_manager:activate(name)
+      return true
+    end
+  end
+  if name and self._container_manager then
     return self._container_manager:focus(name)
   end
   return false
+end
+
+---Focus the next embedded field (Tab navigation)
+function FloatWindow:focus_next_embedded()
+  if self._virtual_manager then
+    self._virtual_manager:focus_next()
+  elseif self._embedded_input_manager then
+    self._embedded_input_manager:focus_next()
+  end
+end
+
+---Focus the previous embedded field (Shift-Tab navigation)
+function FloatWindow:focus_prev_embedded()
+  if self._virtual_manager then
+    self._virtual_manager:focus_prev()
+  elseif self._embedded_input_manager then
+    self._embedded_input_manager:focus_prev()
+  end
 end
 
 ---Get the embedded input manager (lazily created)
@@ -840,16 +899,27 @@ end
 ---Get all embedded input values
 ---@return table<string, string|string[]>
 function FloatWindow:get_all_embedded_values()
-  if self._embedded_input_manager then
-    return self._embedded_input_manager:get_all_values()
+  local values = {}
+  if self._virtual_manager then
+    values = self._virtual_manager:get_all_values()
   end
-  return {}
+  if self._embedded_input_manager then
+    local real_values = self._embedded_input_manager:get_all_values()
+    for k, v in pairs(real_values) do
+      values[k] = v
+    end
+  end
+  return values
 end
 
 ---Get a specific embedded input value
 ---@param key string
 ---@return string|string[]|nil
 function FloatWindow:get_embedded_value(key)
+  if self._virtual_manager then
+    local val = self._virtual_manager:get_value(key)
+    if val ~= nil then return val end
+  end
   if self._embedded_input_manager then
     return self._embedded_input_manager:get_value(key)
   end
@@ -860,6 +930,13 @@ end
 ---@param key string
 ---@param value string|string[]
 function FloatWindow:set_embedded_value(key, value)
+  if self._virtual_manager then
+    local vc = self._virtual_manager:get(key)
+    if vc then
+      self._virtual_manager:set_value(key, value)
+      return
+    end
+  end
   if self._embedded_input_manager then
     self._embedded_input_manager:set_value(key, value)
   end
@@ -885,10 +962,23 @@ function FloatWindow:_create_containers_from_builder(cb)
   local containers = cb:get_containers()
   if not containers then return end
 
+  local use_virtual = self.config.virtual_containers ~= false
+  local has_virtual = false
+  local has_real = false
+
   for name, def in pairs(containers) do
-    if def.type == "container" then
-      -- User-specified width/height is the total visual footprint.
-      -- Border is inside: subtract it to get the content area for nvim_open_win.
+    if def.type == "container" and use_virtual then
+      -- Virtual mode: route generic containers through virtual manager (no real window yet)
+      if not self._virtual_manager then
+        self._virtual_manager = get_virtual_container_manager().new(self)
+      end
+      local width = def.width or self._win_width
+      local col = self:_resolve_container_col(def, width)
+      local resolved_def = vim.tbl_extend('force', def, { col = col, width = width })
+      self._virtual_manager:add_from_definition(name, resolved_def)
+      has_virtual = true
+    elseif def.type == "container" then
+      -- Non-virtual: create real window immediately
       local visual_width = def.width or self._win_width
       local visual_height = def.height
       local border_rows = def.border_rows or 0
@@ -913,6 +1003,18 @@ function FloatWindow:_create_containers_from_builder(cb)
         on_blur = def.on_blur,
         winhighlight = def.winhighlight,
       })
+      has_real = true
+    elseif use_virtual and (def.type == "embedded_input" or def.type == "embedded_dropdown" or def.type == "embedded_multi_dropdown") then
+      -- Virtual mode: add to virtual manager (no real window yet)
+      if not self._virtual_manager then
+        self._virtual_manager = get_virtual_container_manager().new(self)
+      end
+      -- Resolve col and width, passing resolved copy to avoid mutating ContentBuilder
+      local width = def.width or self._win_width
+      local col = self:_resolve_container_col(def, width)
+      local resolved_def = vim.tbl_extend('force', def, { col = col, width = width })
+      self._virtual_manager:add_from_definition(name, resolved_def)
+      has_virtual = true
     elseif def.type == "embedded_input" then
       local width = def.width or self._win_width
       local col = self:_resolve_container_col(def, width)
@@ -931,6 +1033,7 @@ function FloatWindow:_create_containers_from_builder(cb)
         winhighlight = def.winhighlight,
         border = def.border,
       })
+      has_real = true
     elseif def.type == "embedded_dropdown" then
       local width = def.width or self._win_width
       local col = self:_resolve_container_col(def, width)
@@ -950,6 +1053,7 @@ function FloatWindow:_create_containers_from_builder(cb)
         winhighlight = def.winhighlight,
         border = def.border,
       })
+      has_real = true
     elseif def.type == "embedded_multi_dropdown" then
       local width = def.width or self._win_width
       local col = self:_resolve_container_col(def, width)
@@ -970,16 +1074,25 @@ function FloatWindow:_create_containers_from_builder(cb)
         winhighlight = def.winhighlight,
         border = def.border,
       })
+      has_real = true
     end
   end
 
-  -- Setup spatial navigation after all containers are created
-  local nav_self = self
-  vim.schedule(function()
-    if nav_self:is_valid() then
-      require("nvim-float.container.navigation").setup(nav_self)
-    end
-  end)
+  -- Render virtual containers as text and setup cursor tracking
+  if has_virtual and self._virtual_manager then
+    self._virtual_manager:render_all_virtual(true)
+    self._virtual_manager:setup_cursor_tracking()
+  end
+
+  -- Setup spatial navigation for real containers (non-virtual path)
+  if has_real then
+    local nav_self = self
+    vim.schedule(function()
+      if nav_self:is_valid() then
+        require("nvim-float.container.navigation").setup(nav_self)
+      end
+    end)
+  end
 end
 
 -- ============================================================================
