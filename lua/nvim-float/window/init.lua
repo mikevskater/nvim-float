@@ -554,8 +554,36 @@ function FloatWindow:render()
 
   -- Recreate embedded containers
   if cb.get_containers and cb:get_containers() then
+    -- Snapshot scroll state and active container before teardown
+    local scroll_snapshot = nil
+    local was_active_name = nil
+    local was_active_cursor = nil
+    local was_active_mode = nil
+
+    if self._virtual_manager then
+      scroll_snapshot = self._virtual_manager:snapshot_scroll_state()
+
+      if self._virtual_manager._active_name then
+        was_active_name = self._virtual_manager._active_name
+        was_active_mode = vim.fn.mode()
+        local active_vc = self._virtual_manager:get_active()
+        if active_vc and active_vc._materialized then
+          local active_container = active_vc:get_container()
+          if active_container and active_container:is_valid() then
+            was_active_cursor = vim.api.nvim_win_get_cursor(active_container.winid)
+          end
+        end
+      end
+    end
+
     -- Teardown scroll sync before closing old containers
     require("nvim-float.container.scroll_sync").teardown(self)
+
+    -- Ensure parent has focus before container recreation
+    if self:is_valid() then
+      pcall(vim.api.nvim_set_current_win, self.winid)
+    end
+
     -- Close virtual containers
     if self._virtual_manager then
       self._virtual_manager:close_all()
@@ -569,9 +597,58 @@ function FloatWindow:render()
       self._embedded_input_manager:close_all()
     end
     self._navigation_regions = nil
-    self:_create_containers_from_builder(cb)
+    self:_create_containers_from_builder(cb, true)  -- skip_render: we render below after restoring state
+
+    -- Restore scroll state into newly created virtual containers
+    if scroll_snapshot and self._virtual_manager then
+      self._virtual_manager:restore_scroll_state(scroll_snapshot)
+    end
+
+    -- Suppress virtual rendering for the container that will be re-activated.
+    -- For generic containers this renders borders only (no content/highlights/scrollbar).
+    -- For input/dropdown types this skips rendering entirely.
+    -- The real window will cover the content area immediately after activation.
+    if was_active_name and self._virtual_manager then
+      local pending_vc = self._virtual_manager:get(was_active_name)
+      if pending_vc then
+        pending_vc._suppress_content = true
+      end
+    end
+
+    -- Render all virtual containers (suppressed ones draw frame only)
+    if self._virtual_manager then
+      self._virtual_manager:render_all_virtual(true)
+    end
+
     -- Setup scroll sync after new containers created
     require("nvim-float.container.scroll_sync").setup(self)
+
+    -- Re-activate previously active container synchronously (no vim.schedule gap)
+    if was_active_name and self._virtual_manager then
+      local vc = self._virtual_manager:get(was_active_name)
+      if vc then
+        vc._suppress_content = false
+        self._virtual_manager:activate(was_active_name)
+        -- Restore cursor position inside re-activated container
+        if was_active_cursor then
+          local active = self._virtual_manager:get_active()
+          local active_container = active and active:get_container()
+          if active_container and active_container:is_valid() then
+            local max_lines = vim.api.nvim_buf_line_count(active_container.bufnr)
+            local row = math.min(was_active_cursor[1], max_lines)
+            pcall(vim.api.nvim_win_set_cursor, active_container.winid,
+              { row, was_active_cursor[2] })
+          end
+        end
+        -- Re-enter insert mode if user was typing
+        if was_active_mode == 'i' or was_active_mode == 'R' then
+          local active = self._virtual_manager:get_active()
+          if active and active.type == "embedded_input" then
+            vim.cmd('startinsert')
+          end
+        end
+      end
+    end
   end
 
   -- Restore cursor position (clamped to new buffer bounds)
@@ -988,7 +1065,8 @@ end
 
 ---Create containers from content builder definitions
 ---@param cb ContentBuilder
-function FloatWindow:_create_containers_from_builder(cb)
+---@param skip_render? boolean If true, skip initial render_all_virtual (caller will do it)
+function FloatWindow:_create_containers_from_builder(cb, skip_render)
   local containers = cb:get_containers()
   if not containers then return end
 
@@ -1110,7 +1188,9 @@ function FloatWindow:_create_containers_from_builder(cb)
 
   -- Render virtual containers as text and setup cursor tracking
   if has_virtual and self._virtual_manager then
-    self._virtual_manager:render_all_virtual(true)
+    if not skip_render then
+      self._virtual_manager:render_all_virtual(true)
+    end
     self._virtual_manager:setup_cursor_tracking()
   end
 

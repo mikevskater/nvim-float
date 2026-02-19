@@ -11,6 +11,27 @@ local EmbeddedDropdown = require("nvim-float.container.dropdown")
 local EmbeddedMultiDropdown = require("nvim-float.container.multi_dropdown")
 local EmbeddedContainer = require("nvim-float.container")
 
+---Convert a 0-indexed display (cell) column to a 0-indexed byte column.
+---@param line string Buffer line text
+---@param dcol number 0-indexed display column
+---@return number 0-indexed byte offset
+local function displaycol_to_byte(line, dcol)
+  if dcol <= 0 or #line == 0 then return 0 end
+  local n = vim.fn.strchars(line)
+  local width_so_far = 0
+  for i = 0, n - 1 do
+    if width_so_far >= dcol then
+      return vim.fn.byteidx(line, i)
+    end
+    local byte_start = vim.fn.byteidx(line, i)
+    local byte_end = vim.fn.byteidx(line, i + 1)
+    if byte_end < 0 then byte_end = #line end
+    local ch = line:sub(byte_start + 1, byte_end)
+    width_so_far = width_so_far + vim.fn.strdisplaywidth(ch)
+  end
+  return #line
+end
+
 ---@class VirtualContainer
 ---@field name string Unique key for this container
 ---@field type "embedded_input"|"embedded_dropdown"|"embedded_multi_dropdown"|"container"
@@ -58,6 +79,7 @@ function VirtualContainer.new(name, def, parent_float)
   self._real_field = nil
   self._ns = vim.api.nvim_create_namespace("nvim_float_virtual_" .. name)
   self._dirty = true  -- Needs initial render
+  self._suppress_content = false  -- When true, render_virtual skips content (frame only)
   self._row = def.row or 0
   self._width = def.width or parent_float._win_width
   self._height = 1
@@ -128,6 +150,15 @@ end
 function VirtualContainer:render_virtual()
   self._dirty = false
 
+  -- When suppressed, skip rendering entirely for input/dropdown types.
+  -- For generic containers, render borders only (content area blank).
+  if self._suppress_content then
+    if self.type == "container" then
+      return self:_render_virtual_container_frame_only()
+    end
+    return
+  end
+
   if self.type == "container" then
     return self:_render_virtual_container()
   end
@@ -163,30 +194,35 @@ function VirtualContainer:render_virtual()
   end
 
   -- Build new line: [before_col][display_text][after_end]
-  -- Use byte length of display text (not display width) for correct extraction
+  -- Use display-width arithmetic to find the after boundary, since the
+  -- previous render may have left multi-byte chars with different byte lengths.
   local before = line:sub(1, col)
-  local end_byte = col + #display  -- byte offset after our rendered text
+  local after_start = displaycol_to_byte(line, col + width)
   local after = ""
-  if #line > end_byte then
-    after = line:sub(end_byte + 1)
+  if after_start < #line then
+    after = line:sub(after_start + 1)
   end
 
   local new_line = before .. display .. after
+  local end_byte = col + #display  -- byte offset after rendered display text
 
   -- Write the line
   vim.api.nvim_set_option_value('modifiable', true, { buf = bufnr })
   vim.api.nvim_buf_set_lines(bufnr, row, row + 1, false, { new_line })
   vim.api.nvim_set_option_value('modifiable', fw.config.modifiable or false, { buf = bufnr })
 
-  -- Apply highlight via extmark
-  vim.api.nvim_buf_clear_namespace(bufnr, self._ns, row, row + 1)
+  -- Apply highlight via extmark (clear entire namespace to remove any stale
+  -- extmarks that may have drifted to adjacent rows during buffer rewrites)
+  vim.api.nvim_buf_clear_namespace(bufnr, self._ns, 0, -1)
   pcall(vim.api.nvim_buf_add_highlight, bufnr, self._ns, hl_group, row, col, end_byte)
 
   -- For dropdowns, add arrow indicator at end of field region
   if self.type == "embedded_dropdown" or self.type == "embedded_multi_dropdown" then
-    local arrow_byte = col + width - 2
-    if arrow_byte > col then
-      pcall(vim.api.nvim_buf_set_extmark, bufnr, self._ns, row, arrow_byte, {
+    local arrow_dcol = width - 2
+    if arrow_dcol > 0 then
+      -- Convert display column within the rendered text to byte offset
+      local arrow_byte_in_display = displaycol_to_byte(display, arrow_dcol)
+      pcall(vim.api.nvim_buf_set_extmark, bufnr, self._ns, row, col + arrow_byte_in_display, {
         virt_text = { { "\u{25BC}", "NvimFloatInputPlaceholder" } },  -- ▼
         virt_text_pos = "overlay",
       })
@@ -297,12 +333,13 @@ function VirtualContainer:_render_virtual_container()
     end
 
     -- Splice: [before_col][rendered_text][after_end]
-    -- Use byte length of rendered text (not display width) for correct extraction
+    -- Use display-width boundary to find after, since previous render may
+    -- have left multi-byte chars with different byte lengths.
     local before = line:sub(1, col)
     local after = ""
-    local rendered_bytes = #rendered
-    if #line > col + rendered_bytes then
-      after = line:sub(col + rendered_bytes + 1)
+    local after_start = displaycol_to_byte(line, col + width)
+    if after_start < #line then
+      after = line:sub(after_start + 1)
     end
 
     vim.api.nvim_buf_set_lines(bufnr, row, row + 1, false, { before .. rendered .. after })
@@ -321,6 +358,109 @@ function VirtualContainer:_render_virtual_container()
 
   -- Render scrollbar indicator if content overflows
   if self._total_content_lines > inner_h then
+    self:_render_virtual_scrollbar_indicator()
+  end
+end
+
+---Render only the border frame of a generic container (no content, no scrollbar).
+---Used when the container is about to be re-materialized so the real window
+---covers the content area. Avoids flashing by not drawing virtual content
+---that would be immediately replaced.
+function VirtualContainer:_render_virtual_container_frame_only()
+  local fw = self._parent_float
+  if not fw or not fw:is_valid() then return end
+
+  local bufnr = fw.bufnr
+  local col = self._col
+  local width = self._width
+  local height = self._height
+  local bt = self._border_top or 0
+  local bb = self._border_bottom or 0
+  local bl = self._border_left or 0
+  local br = self._border_right or 0
+  local inner_w = self._inner_width
+  local chars = self._border_chars
+
+  -- Clear previous extmarks
+  vim.api.nvim_buf_clear_namespace(bufnr, self._ns, self._row, self._row + height)
+
+  local rendered_lines = {}
+  local border_highlights = {}
+
+  for visual_row = 0, height - 1 do
+    local line_text
+
+    if bt > 0 and visual_row == 0 and chars then
+      line_text = self:_build_border_text_line(chars, "top", inner_w)
+      table.insert(border_highlights, { visual_row, 0, #line_text, "NvimFloatBorder" })
+
+    elseif bb > 0 and visual_row == height - 1 and chars then
+      line_text = self:_build_border_text_line(chars, "bottom", inner_w)
+      table.insert(border_highlights, { visual_row, 0, #line_text, "NvimFloatBorder" })
+
+    else
+      -- Content row: borders + blank content (real window will cover this)
+      local left_char = ""
+      local right_char = ""
+      if bl > 0 and chars then
+        left_char = self:_get_border_char(chars[8])
+      end
+      if br > 0 and chars then
+        right_char = self:_get_border_char(chars[4])
+      end
+      line_text = left_char .. string.rep(" ", inner_w) .. right_char
+
+      if bl > 0 then
+        table.insert(border_highlights, { visual_row, 0, #left_char, "NvimFloatBorder" })
+      end
+      if br > 0 then
+        local rc_start = #left_char + inner_w
+        table.insert(border_highlights, { visual_row, rc_start, rc_start + #right_char, "NvimFloatBorder" })
+      end
+    end
+
+    table.insert(rendered_lines, line_text or "")
+  end
+
+  -- Splice into parent buffer
+  vim.api.nvim_set_option_value('modifiable', true, { buf = bufnr })
+
+  for i, rendered in ipairs(rendered_lines) do
+    local row = self._row + (i - 1)
+    local lines = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)
+    local line = lines[1] or ""
+
+    if #line < col then
+      line = line .. string.rep(" ", col - #line)
+    end
+
+    local rw = vim.fn.strdisplaywidth(rendered)
+    if rw < width then
+      rendered = rendered .. string.rep(" ", width - rw)
+    end
+
+    local before = line:sub(1, col)
+    local after = ""
+    local after_start = displaycol_to_byte(line, col + width)
+    if after_start < #line then
+      after = line:sub(after_start + 1)
+    end
+
+    vim.api.nvim_buf_set_lines(bufnr, row, row + 1, false, { before .. rendered .. after })
+  end
+
+  vim.api.nvim_set_option_value('modifiable', fw.config.modifiable or false, { buf = bufnr })
+
+  -- Apply border highlights only
+  for _, hl in ipairs(border_highlights) do
+    local row = self._row + hl[1]
+    pcall(vim.api.nvim_buf_add_highlight, bufnr, self._ns, hl[4], row, col + hl[2], col + hl[3])
+  end
+
+  -- Render scrollbar indicator (part of the visual frame, not content).
+  -- This ensures the scrollbar is visible when the container is about to be
+  -- re-materialized, since the real window is created with scrollbar=false.
+  if self._total_content_lines > self._inner_height then
     self:_render_virtual_scrollbar_indicator()
   end
 end
@@ -389,6 +529,9 @@ function VirtualContainer:_apply_virtual_container_highlights()
 end
 
 ---Render a text-based scrollbar using overlay extmarks at the right edge.
+---Tracks extmark IDs in _scrollbar_extmark_ids so callers can update the
+---scrollbar incrementally (e.g. during materialized scroll) without clearing
+---the entire namespace.
 function VirtualContainer:_render_virtual_scrollbar_indicator()
   local fw = self._parent_float
   if not fw or not fw:is_valid() then return end
@@ -402,6 +545,14 @@ function VirtualContainer:_render_virtual_scrollbar_indicator()
 
   if total <= inner_h or inner_h <= 0 then return end
 
+  -- Remove previous scrollbar extmarks (allows incremental re-render)
+  if self._scrollbar_extmark_ids then
+    for _, id in ipairs(self._scrollbar_extmark_ids) do
+      pcall(vim.api.nvim_buf_del_extmark, bufnr, self._ns, id)
+    end
+  end
+  self._scrollbar_extmark_ids = {}
+
   -- Calculate thumb position and size
   local thumb_size = math.max(1, math.floor(inner_h * inner_h / total + 0.5))
   local max_offset = total - inner_h
@@ -411,12 +562,12 @@ function VirtualContainer:_render_virtual_scrollbar_indicator()
   end
   thumb_pos = math.max(0, math.min(thumb_pos, inner_h - thumb_size))
 
-  -- Place scrollbar at right edge: on border char if present, else last content col
-  local scrollbar_byte_col
+  -- Scrollbar display column: on border char if present, else last content col
+  local target_dcol
   if br > 0 then
-    scrollbar_byte_col = self._col + self._width - br
+    target_dcol = self._col + self._width - br
   else
-    scrollbar_byte_col = self._col + self._width - 1
+    target_dcol = self._col + self._width - 1
   end
 
   for i = 0, inner_h - 1 do
@@ -429,10 +580,16 @@ function VirtualContainer:_render_virtual_scrollbar_indicator()
       char = "\u{2591}"  -- ░
       hl = "NvimFloatBorder"
     end
-    pcall(vim.api.nvim_buf_set_extmark, bufnr, self._ns, row, scrollbar_byte_col, {
+    -- Convert display column to byte offset using actual buffer line content
+    local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
+    local byte_col = displaycol_to_byte(line, target_dcol)
+    local ok, id = pcall(vim.api.nvim_buf_set_extmark, bufnr, self._ns, row, byte_col, {
       virt_text = { { char, hl } },
       virt_text_pos = "overlay",
     })
+    if ok and id then
+      table.insert(self._scrollbar_extmark_ids, id)
+    end
   end
 end
 
@@ -583,6 +740,27 @@ function VirtualContainer:materialize(on_deactivate)
     local bt = self._border_top or 0
     local bl = self._border_left or 0
 
+    -- Viewport clamping: clamp dimensions to fit within parent window.
+    -- relative='win' windows are NOT clipped by Neovim, so we must do it manually.
+    local viewport_row = self._row + bt - scroll_adj
+    local viewport_col = self._col + bl
+    local parent_h = fw._win_height
+    local parent_w = fw._win_width
+
+    local clip_top = math.max(0, -viewport_row)
+    local clip_bottom = math.max(0, (viewport_row + self._inner_height) - parent_h)
+    local clip_right = math.max(0, (viewport_col + self._inner_width) - parent_w)
+    local clamped_h = math.max(1, self._inner_height - clip_top - clip_bottom)
+    local clamped_w = math.max(1, self._inner_width - clip_right)
+    local clamped_row = math.max(0, viewport_row)
+
+    -- Abort if container is fully off-screen
+    if self._inner_height - clip_top - clip_bottom < 1
+      or self._inner_width - clip_right < 1 then
+      self._materialized = false
+      return
+    end
+
     -- Derive winhighlight: match parent's Normal background for seamless blend
     local container_whl = def.winhighlight
     if not container_whl then
@@ -593,10 +771,10 @@ function VirtualContainer:materialize(on_deactivate)
 
     self._real_field = EmbeddedContainer.new({
       name = self.name,
-      row = self._row + bt - scroll_adj,
-      col = self._col + bl,
-      width = self._inner_width,
-      height = self._inner_height,
+      row = clamped_row,
+      col = viewport_col,
+      width = clamped_w,
+      height = clamped_h,
       parent_winid = fw.winid,
       parent_float = fw,
       zindex_offset = def.zindex_offset,
@@ -610,11 +788,54 @@ function VirtualContainer:materialize(on_deactivate)
       cursorline = false,
     })
 
-    -- Restore scroll position
-    if self._state.scroll_offset > 0 and self._real_field:is_valid() then
+    -- Store scroll-sync fields so WinScrolled sync computes correct deltas
+    if self._real_field then
+      self._real_field._buffer_row = self._row + bt
+      self._real_field._buffer_col = self._col + bl
+      self._real_field._original_width = self._inner_width
+      self._real_field._original_height = self._inner_height
+      self._real_field._last_clip_top = clip_top
+      self._real_field._last_clip_bottom = clip_bottom
+      self._real_field._last_clip_right = clip_right
+    end
+
+    -- Restore scroll position, adjusted for top clipping
+    local adjusted_scroll = (self._state.scroll_offset or 0) + clip_top
+    if adjusted_scroll > 0 and self._real_field:is_valid() then
       pcall(vim.api.nvim_win_call, self._real_field.winid, function()
-        vim.cmd("normal! " .. (self._state.scroll_offset + 1) .. "zt")
+        vim.cmd("normal! " .. (adjusted_scroll + 1) .. "zt")
       end)
+    end
+
+    -- Setup real-time scrollbar: update virtual scrollbar extmarks as user scrolls
+    if self._total_content_lines > self._inner_height and self._real_field:is_valid() then
+      local augroup = vim.api.nvim_create_augroup("nvim_float_vscroll_" .. self.name, { clear = true })
+      self._scroll_augroup = augroup
+      local vself = self
+      local function update_scrollbar()
+        if not vself._real_field or not vself._real_field:is_valid() then return end
+        if not vself._parent_float or not vself._parent_float:is_valid() then return end
+        local topline = vim.fn.line('w0', vself._real_field.winid)
+        vself._state.scroll_offset = topline - 1
+        vself:_render_virtual_scrollbar_indicator()
+      end
+      vim.api.nvim_create_autocmd("CursorMoved", {
+        group = augroup,
+        buffer = self._real_field.bufnr,
+        callback = function()
+          vim.schedule(update_scrollbar)
+        end,
+      })
+      vim.api.nvim_create_autocmd("WinScrolled", {
+        group = augroup,
+        callback = function()
+          if not vself._real_field or not vself._real_field:is_valid() then return end
+          local winid_str = tostring(vself._real_field.winid)
+          if vim.v.event and vim.v.event[winid_str] then
+            vim.schedule(update_scrollbar)
+          end
+        end,
+      })
     end
   end
 
@@ -632,6 +853,12 @@ end
 ---Sync state from real field, destroy it, re-render as virtual text.
 function VirtualContainer:dematerialize()
   if not self._materialized then return end
+
+  -- Clean up scroll-tracking autocmds
+  if self._scroll_augroup then
+    pcall(vim.api.nvim_del_augroup_by_id, self._scroll_augroup)
+    self._scroll_augroup = nil
+  end
 
   -- Sync state from real field
   if self._real_field then
@@ -655,6 +882,7 @@ function VirtualContainer:dematerialize()
   end
 
   self._materialized = false
+  self._suppress_content = false
 
   -- Re-render as virtual text
   self:render_virtual()

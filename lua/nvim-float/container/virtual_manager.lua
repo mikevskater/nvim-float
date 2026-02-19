@@ -398,6 +398,48 @@ function VirtualContainerManager:_setup_active_exit_keymaps(vc)
       pcall(vim.api.nvim_win_set_cursor, fw.winid, { target_row0 + 1, vc._col })
     end
   end, opts)
+
+  -- h / Left: exit left of the field
+  vim.keymap.set('n', 'h', function()
+    if not container:is_valid() then return end
+    local target_col = math.max(0, vc._col - 1)
+    self:deactivate()
+    if fw:is_valid() then
+      pcall(vim.api.nvim_win_set_cursor, fw.winid, { vc._row + 1, target_col })
+    end
+  end, opts)
+
+  vim.keymap.set('n', '<Left>', function()
+    if not container:is_valid() then return end
+    local target_col = math.max(0, vc._col - 1)
+    self:deactivate()
+    if fw:is_valid() then
+      pcall(vim.api.nvim_win_set_cursor, fw.winid, { vc._row + 1, target_col })
+    end
+  end, opts)
+
+  -- l / Right: exit right of the field
+  vim.keymap.set('n', 'l', function()
+    if not container:is_valid() then return end
+    local target_col = vc._col + vc._width
+    self:deactivate()
+    if fw:is_valid() then
+      local line = vim.api.nvim_buf_get_lines(fw.bufnr, vc._row, vc._row + 1, false)[1] or ""
+      target_col = math.min(target_col, math.max(0, #line - 1))
+      pcall(vim.api.nvim_win_set_cursor, fw.winid, { vc._row + 1, target_col })
+    end
+  end, opts)
+
+  vim.keymap.set('n', '<Right>', function()
+    if not container:is_valid() then return end
+    local target_col = vc._col + vc._width
+    self:deactivate()
+    if fw:is_valid() then
+      local line = vim.api.nvim_buf_get_lines(fw.bufnr, vc._row, vc._row + 1, false)[1] or ""
+      target_col = math.min(target_col, math.max(0, #line - 1))
+      pcall(vim.api.nvim_win_set_cursor, fw.winid, { vc._row + 1, target_col })
+    end
+  end, opts)
 end
 
 -- ============================================================================
@@ -432,6 +474,31 @@ function VirtualContainerManager:_setup_container_exit_keymaps(vc)
     end, opts)
   end
 
+  -- Helper: scroll parent to reveal clipped container rows.
+  -- Returns true if the parent was scrolled.
+  local function scroll_parent_to_reveal(direction)
+    if not fw:is_valid() or not container:is_valid() then return false end
+    local win_h = vim.api.nvim_win_get_height(container.winid)
+    if win_h >= vc._inner_height then return false end  -- not clipped
+
+    local scroll_cmd = direction == "down" and "\\<C-e>" or "\\<C-y>"
+    local scrolled = false
+    pcall(function()
+      local old_topline = vim.fn.line('w0', fw.winid)
+      vim.api.nvim_win_call(fw.winid, function()
+        vim.cmd("normal! " .. scroll_cmd)
+      end)
+      scrolled = vim.fn.line('w0', fw.winid) ~= old_topline
+    end)
+
+    if scrolled then
+      -- Sync immediately so the container resizes before cursor moves
+      local scroll_sync = require("nvim-float.container.scroll_sync")
+      scroll_sync.sync(fw)
+    end
+    return scrolled
+  end
+
   -- j: move down within container, exit at bottom boundary
   vim.keymap.set('n', 'j', function()
     if not container:is_valid() then return end
@@ -447,7 +514,12 @@ function VirtualContainerManager:_setup_container_exit_keymaps(vc)
         pcall(vim.api.nvim_win_set_cursor, fw.winid, { target_row0 + 1, vc._col })
       end
     else
-      -- Normal j within container
+      -- If cursor is at visible bottom and container is clipped, scroll parent first
+      local topline = vim.fn.line('w0', container.winid)
+      local win_h = vim.api.nvim_win_get_height(container.winid)
+      if cursor[1] >= topline + win_h - 1 then
+        scroll_parent_to_reveal("down")
+      end
       vim.cmd("normal! j")
     end
   end, opts)
@@ -466,7 +538,11 @@ function VirtualContainerManager:_setup_container_exit_keymaps(vc)
         pcall(vim.api.nvim_win_set_cursor, fw.winid, { target_row0 + 1, vc._col })
       end
     else
-      -- Normal k within container
+      -- If cursor is at visible top and container is clipped, scroll parent first
+      local topline = vim.fn.line('w0', container.winid)
+      if cursor[1] <= topline then
+        scroll_parent_to_reveal("up")
+      end
       vim.cmd("normal! k")
     end
   end, opts)
@@ -485,6 +561,11 @@ function VirtualContainerManager:_setup_container_exit_keymaps(vc)
         pcall(vim.api.nvim_win_set_cursor, fw.winid, { target_row0 + 1, vc._col })
       end
     else
+      local topline = vim.fn.line('w0', container.winid)
+      local win_h = vim.api.nvim_win_get_height(container.winid)
+      if cursor[1] >= topline + win_h - 1 then
+        scroll_parent_to_reveal("down")
+      end
       vim.cmd("normal! j")
     end
   end, opts)
@@ -501,9 +582,65 @@ function VirtualContainerManager:_setup_container_exit_keymaps(vc)
         pcall(vim.api.nvim_win_set_cursor, fw.winid, { target_row0 + 1, vc._col })
       end
     else
+      local topline = vim.fn.line('w0', container.winid)
+      if cursor[1] <= topline then
+        scroll_parent_to_reveal("up")
+      end
       vim.cmd("normal! k")
     end
   end, opts)
+
+  -- h / Left: exit at left boundary (col 0), normal movement otherwise
+  local function exit_left()
+    if not container:is_valid() then return end
+    local cursor = vim.api.nvim_win_get_cursor(container.winid)
+    if cursor[2] <= 0 then
+      -- At col 0: map internal row to parent row and exit left
+      local bt = vc._border_top or 0
+      local live_scroll = vim.fn.line('w0', container.winid) - 1
+      local parent_row0 = vc._row + bt + (cursor[1] - 1 - live_scroll)
+      local target_col = math.max(0, vc._col - 1)
+      self:deactivate()
+      if fw:is_valid() then
+        local line_count = vim.api.nvim_buf_line_count(fw.bufnr)
+        parent_row0 = math.max(0, math.min(parent_row0, line_count - 1))
+        pcall(vim.api.nvim_win_set_cursor, fw.winid, { parent_row0 + 1, target_col })
+      end
+    else
+      vim.cmd("normal! h")
+    end
+  end
+
+  vim.keymap.set('n', 'h', exit_left, opts)
+  vim.keymap.set('n', '<Left>', exit_left, opts)
+
+  -- l / Right: exit at right boundary (last col), normal movement otherwise
+  local function exit_right()
+    if not container:is_valid() then return end
+    local cursor = vim.api.nvim_win_get_cursor(container.winid)
+    local line = vim.api.nvim_buf_get_lines(container.bufnr, cursor[1] - 1, cursor[1], false)[1] or ""
+    local last_col = math.max(0, #line - 1)
+    if cursor[2] >= last_col then
+      -- At last col: map internal row to parent row and exit right
+      local bt = vc._border_top or 0
+      local live_scroll = vim.fn.line('w0', container.winid) - 1
+      local parent_row0 = vc._row + bt + (cursor[1] - 1 - live_scroll)
+      local target_col = vc._col + vc._width
+      self:deactivate()
+      if fw:is_valid() then
+        local line_count = vim.api.nvim_buf_line_count(fw.bufnr)
+        parent_row0 = math.max(0, math.min(parent_row0, line_count - 1))
+        local parent_line = vim.api.nvim_buf_get_lines(fw.bufnr, parent_row0, parent_row0 + 1, false)[1] or ""
+        target_col = math.min(target_col, math.max(0, #parent_line - 1))
+        pcall(vim.api.nvim_win_set_cursor, fw.winid, { parent_row0 + 1, target_col })
+      end
+    else
+      vim.cmd("normal! l")
+    end
+  end
+
+  vim.keymap.set('n', 'l', exit_right, opts)
+  vim.keymap.set('n', '<Right>', exit_right, opts)
 end
 
 -- ============================================================================
@@ -539,6 +676,45 @@ function VirtualContainerManager:get_all_values()
     values[key] = vc:get_value()
   end
   return values
+end
+
+-- ============================================================================
+-- Scroll State Preservation
+-- ============================================================================
+
+---Snapshot scroll offsets for all generic containers.
+---For materialized containers, reads the live scroll position from the window.
+---For virtual containers, reads the stored scroll offset from state.
+---@return table<string, number> Map of container name → scroll offset
+function VirtualContainerManager:snapshot_scroll_state()
+  local snapshot = {}
+  for name, vc in pairs(self._virtuals) do
+    if vc.type == "container" then
+      if vc._materialized and vc._real_field and vc._real_field:is_valid() then
+        -- Read live scroll position from the real window
+        snapshot[name] = vim.fn.line('w0', vc._real_field.winid) - 1
+      else
+        -- Use stored state
+        snapshot[name] = vc._state.scroll_offset or 0
+      end
+    end
+  end
+  return snapshot
+end
+
+---Restore scroll offsets from a previous snapshot.
+---Clamps values to valid range and marks containers dirty for re-render.
+---@param snapshot table<string, number> Map of container name → scroll offset
+function VirtualContainerManager:restore_scroll_state(snapshot)
+  if not snapshot then return end
+  for name, offset in pairs(snapshot) do
+    local vc = self._virtuals[name]
+    if vc and vc.type == "container" then
+      local max_offset = math.max(0, vc._total_content_lines - vc._inner_height)
+      vc._state.scroll_offset = math.max(0, math.min(offset, max_offset))
+      vc._dirty = true
+    end
+  end
 end
 
 -- ============================================================================
