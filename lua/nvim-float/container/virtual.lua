@@ -134,9 +134,54 @@ function VirtualContainer.new(name, def, parent_float)
     self._state = {
       scroll_offset = 0,
     }
+
+    -- Resolve combined border and content background highlights for virtual mode.
+    -- Border needs: NvimFloatBorder fg + parent Normal bg.
+    -- Content needs: parent Normal bg as base fill.
+    self._virtual_border_hl, self._virtual_content_bg_hl = self:_resolve_virtual_highlights()
   end
 
   return self
+end
+
+-- ============================================================================
+-- Highlight Resolution
+-- ============================================================================
+
+---Resolve the parent's Normal hl group name from its winhighlight setting.
+---@return string parent_normal_hl_name
+function VirtualContainer:_get_parent_normal_hl()
+  local fw = self._parent_float
+  local parent_whl = fw and fw.config and fw.config.winhighlight
+    or 'Normal:Normal,FloatBorder:NvimFloatBorder'
+  return parent_whl:match('Normal:([^,]+)') or 'Normal'
+end
+
+---Create combined highlight groups for virtual border and content background.
+---Border hl = NvimFloatBorder fg + parent Normal bg.
+---Content bg hl = parent Normal (used as base fill for content area).
+---@return string border_hl_name
+---@return string content_bg_hl_name
+function VirtualContainer:_resolve_virtual_highlights()
+  local parent_normal_name = self:_get_parent_normal_hl()
+
+  -- Extract bg color from parent's Normal highlight
+  local parent_hl = vim.api.nvim_get_hl(0, { name = parent_normal_name, link = false })
+  local parent_bg = parent_hl.bg
+
+  -- Extract fg color from NvimFloatBorder
+  local border_hl = vim.api.nvim_get_hl(0, { name = "NvimFloatBorder", link = false })
+  local border_fg = border_hl.fg
+
+  -- Create combined border highlight: border fg + parent bg
+  local border_hl_name = "NvimFloatVirtualBorder_" .. self.name
+  local border_def = {}
+  if border_fg then border_def.fg = border_fg end
+  if parent_bg then border_def.bg = parent_bg end
+  vim.api.nvim_set_hl(0, border_hl_name, border_def)
+
+  -- Content background: just the parent Normal (already exists)
+  return border_hl_name, parent_normal_name
 end
 
 -- ============================================================================
@@ -252,13 +297,16 @@ function VirtualContainer:_render_virtual_container()
   local inner_h = self._inner_height
   local chars = self._border_chars
   local scroll_offset = self._state.scroll_offset
+  local border_hl = self._virtual_border_hl or "NvimFloatBorder"
+  local content_bg_hl = self._virtual_content_bg_hl
 
   -- Clear previous extmarks for all rows
   vim.api.nvim_buf_clear_namespace(bufnr, self._ns, self._row, self._row + height)
 
-  -- Build all rendered lines and track border highlights
+  -- Build all rendered lines and track highlights
   local rendered_lines = {}
   local border_highlights = {}  -- { visual_row, byte_start, byte_end, hl_group }
+  local content_bg_ranges = {}  -- { visual_row, byte_start, byte_end } for base bg fill
 
   for visual_row = 0, height - 1 do
     local line_text
@@ -266,12 +314,12 @@ function VirtualContainer:_render_virtual_container()
     if bt > 0 and visual_row == 0 and chars then
       -- Top border row
       line_text = self:_build_border_text_line(chars, "top", inner_w)
-      table.insert(border_highlights, { visual_row, 0, #line_text, "NvimFloatBorder" })
+      table.insert(border_highlights, { visual_row, 0, #line_text, border_hl })
 
     elseif bb > 0 and visual_row == height - 1 and chars then
       -- Bottom border row
       line_text = self:_build_border_text_line(chars, "bottom", inner_w)
-      table.insert(border_highlights, { visual_row, 0, #line_text, "NvimFloatBorder" })
+      table.insert(border_highlights, { visual_row, 0, #line_text, border_hl })
 
     else
       -- Content row (with optional side borders)
@@ -302,24 +350,29 @@ function VirtualContainer:_render_virtual_container()
 
       -- Border highlights for side chars
       if bl > 0 then
-        table.insert(border_highlights, { visual_row, 0, #left_char, "NvimFloatBorder" })
+        table.insert(border_highlights, { visual_row, 0, #left_char, border_hl })
       end
       if br > 0 then
         local rc_start = #left_char + #content_text
-        table.insert(border_highlights, { visual_row, rc_start, rc_start + #right_char, "NvimFloatBorder" })
+        table.insert(border_highlights, { visual_row, rc_start, rc_start + #right_char, border_hl })
+      end
+
+      -- Track content area for background fill
+      if content_bg_hl then
+        table.insert(content_bg_ranges, { visual_row, #left_char, #left_char + #content_text })
       end
     end
 
     table.insert(rendered_lines, line_text or "")
   end
 
-  -- Splice each rendered line into the parent buffer
-  vim.api.nvim_set_option_value('modifiable', true, { buf = bufnr })
+  -- Batch read all affected lines at once
+  local existing = vim.api.nvim_buf_get_lines(bufnr, self._row, self._row + height, false)
 
+  -- Compute all new lines in Lua
+  local new_lines = {}
   for i, rendered in ipairs(rendered_lines) do
-    local row = self._row + (i - 1)
-    local lines = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)
-    local line = lines[1] or ""
+    local line = existing[i] or ""
 
     -- Ensure line is long enough
     if #line < col then
@@ -333,8 +386,6 @@ function VirtualContainer:_render_virtual_container()
     end
 
     -- Splice: [before_col][rendered_text][after_end]
-    -- Use display-width boundary to find after, since previous render may
-    -- have left multi-byte chars with different byte lengths.
     local before = line:sub(1, col)
     local after = ""
     local after_start = displaycol_to_byte(line, col + width)
@@ -342,10 +393,19 @@ function VirtualContainer:_render_virtual_container()
       after = line:sub(after_start + 1)
     end
 
-    vim.api.nvim_buf_set_lines(bufnr, row, row + 1, false, { before .. rendered .. after })
+    new_lines[i] = before .. rendered .. after
   end
 
+  -- Write all lines at once (single API call eliminates mid-render CursorMoved)
+  vim.api.nvim_set_option_value('modifiable', true, { buf = bufnr })
+  vim.api.nvim_buf_set_lines(bufnr, self._row, self._row + height, false, new_lines)
   vim.api.nvim_set_option_value('modifiable', fw.config.modifiable or false, { buf = bufnr })
+
+  -- Apply content background fill FIRST (base layer, content highlights override)
+  for _, bg in ipairs(content_bg_ranges) do
+    local row = self._row + bg[1]
+    pcall(vim.api.nvim_buf_add_highlight, bufnr, self._ns, content_bg_hl, row, col + bg[2], col + bg[3])
+  end
 
   -- Apply border highlights
   for _, hl in ipairs(border_highlights) do
@@ -353,7 +413,7 @@ function VirtualContainer:_render_virtual_container()
     pcall(vim.api.nvim_buf_add_highlight, bufnr, self._ns, hl[4], row, col + hl[2], col + hl[3])
   end
 
-  -- Apply content highlights from nested content_builder
+  -- Apply content highlights from nested content_builder (overrides base bg)
   self:_apply_virtual_container_highlights()
 
   -- Render scrollbar indicator if content overflows
@@ -380,6 +440,7 @@ function VirtualContainer:_render_virtual_container_frame_only()
   local br = self._border_right or 0
   local inner_w = self._inner_width
   local chars = self._border_chars
+  local border_hl = self._virtual_border_hl or "NvimFloatBorder"
 
   -- Clear previous extmarks
   vim.api.nvim_buf_clear_namespace(bufnr, self._ns, self._row, self._row + height)
@@ -392,11 +453,11 @@ function VirtualContainer:_render_virtual_container_frame_only()
 
     if bt > 0 and visual_row == 0 and chars then
       line_text = self:_build_border_text_line(chars, "top", inner_w)
-      table.insert(border_highlights, { visual_row, 0, #line_text, "NvimFloatBorder" })
+      table.insert(border_highlights, { visual_row, 0, #line_text, border_hl })
 
     elseif bb > 0 and visual_row == height - 1 and chars then
       line_text = self:_build_border_text_line(chars, "bottom", inner_w)
-      table.insert(border_highlights, { visual_row, 0, #line_text, "NvimFloatBorder" })
+      table.insert(border_highlights, { visual_row, 0, #line_text, border_hl })
 
     else
       -- Content row: borders + blank content (real window will cover this)
@@ -411,24 +472,24 @@ function VirtualContainer:_render_virtual_container_frame_only()
       line_text = left_char .. string.rep(" ", inner_w) .. right_char
 
       if bl > 0 then
-        table.insert(border_highlights, { visual_row, 0, #left_char, "NvimFloatBorder" })
+        table.insert(border_highlights, { visual_row, 0, #left_char, border_hl })
       end
       if br > 0 then
         local rc_start = #left_char + inner_w
-        table.insert(border_highlights, { visual_row, rc_start, rc_start + #right_char, "NvimFloatBorder" })
+        table.insert(border_highlights, { visual_row, rc_start, rc_start + #right_char, border_hl })
       end
     end
 
     table.insert(rendered_lines, line_text or "")
   end
 
-  -- Splice into parent buffer
-  vim.api.nvim_set_option_value('modifiable', true, { buf = bufnr })
+  -- Batch read all affected lines at once
+  local existing = vim.api.nvim_buf_get_lines(bufnr, self._row, self._row + height, false)
 
+  -- Compute all new lines in Lua
+  local new_lines = {}
   for i, rendered in ipairs(rendered_lines) do
-    local row = self._row + (i - 1)
-    local lines = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)
-    local line = lines[1] or ""
+    local line = existing[i] or ""
 
     if #line < col then
       line = line .. string.rep(" ", col - #line)
@@ -446,9 +507,12 @@ function VirtualContainer:_render_virtual_container_frame_only()
       after = line:sub(after_start + 1)
     end
 
-    vim.api.nvim_buf_set_lines(bufnr, row, row + 1, false, { before .. rendered .. after })
+    new_lines[i] = before .. rendered .. after
   end
 
+  -- Write all lines at once
+  vim.api.nvim_set_option_value('modifiable', true, { buf = bufnr })
+  vim.api.nvim_buf_set_lines(bufnr, self._row, self._row + height, false, new_lines)
   vim.api.nvim_set_option_value('modifiable', fw.config.modifiable or false, { buf = bufnr })
 
   -- Apply border highlights only
@@ -575,10 +639,10 @@ function VirtualContainer:_render_virtual_scrollbar_indicator()
     local char, hl
     if i >= thumb_pos and i < thumb_pos + thumb_size then
       char = "\u{2588}"  -- █
-      hl = "NvimFloatScrollbar"
+      hl = "NvimFloatScrollbarThumb"
     else
       char = "\u{2591}"  -- ░
-      hl = "NvimFloatBorder"
+      hl = "NvimFloatScrollbarTrack"
     end
     -- Convert display column to byte offset using actual buffer line content
     local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""

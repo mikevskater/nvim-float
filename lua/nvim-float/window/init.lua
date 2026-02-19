@@ -649,6 +649,20 @@ function FloatWindow:render()
         end
       end
     end
+
+    -- Safety: clear _suppress_content on ALL containers in case activation
+    -- failed or the active name changed. Prevents stuck blank regions.
+    if self._virtual_manager then
+      for _, vc_name in ipairs(self._virtual_manager:get_names()) do
+        local vc = self._virtual_manager:get(vc_name)
+        if vc and vc._suppress_content then
+          vc._suppress_content = false
+          if not vc._materialized then
+            vc:render_virtual()
+          end
+        end
+      end
+    end
   end
 
   -- Restore cursor position (clamped to new buffer bounds)

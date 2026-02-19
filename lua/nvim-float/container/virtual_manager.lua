@@ -230,19 +230,25 @@ function VirtualContainerManager:setup_cursor_tracking()
   self._nav_augroup = vim.api.nvim_create_augroup(
     "nvim_float_virtual_nav_" .. fw.bufnr, { clear = true })
 
-  -- CursorMoved handler: activate when cursor lands on an input-type container's region
+  -- CursorMoved handler: activate when cursor lands on an input-type container's region.
+  -- Captures cursor position at event time (not inside vim.schedule) to avoid stale reads.
   vim.api.nvim_create_autocmd("CursorMoved", {
     group = self._nav_augroup,
     buffer = fw.bufnr,
     callback = function()
       if self._pending_cursor then return end
+
+      -- Capture position NOW at event time before scheduling
+      local ok, cursor = pcall(vim.api.nvim_win_get_cursor, fw.winid)
+      if not ok then return end
+
       self._pending_cursor = true
       vim.schedule(function()
         self._pending_cursor = false
         if self._activating then return end
         if not fw:is_valid() then return end
 
-        local cursor = vim.api.nvim_win_get_cursor(fw.winid)
+        -- Use the captured position (not a fresh read that may be stale)
         local row0 = cursor[1] - 1
         local col0 = cursor[2]
 
