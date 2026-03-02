@@ -55,7 +55,10 @@ end
 function VirtualContainerManager:add_from_definition(name, def)
   local vc = VirtualContainer.new(name, def, self._parent_float)
   self._virtuals[name] = vc
-  table.insert(self._field_order, { type = def.type, key = name })
+  -- Only add to field order (Tab navigation) if tab_stop is not explicitly false
+  if def.tab_stop ~= false then
+    table.insert(self._field_order, { type = def.type, key = name })
+  end
 end
 
 -- ============================================================================
@@ -276,14 +279,18 @@ function VirtualContainerManager:setup_cursor_tracking()
   })
 
   -- Tab / Shift-Tab for field navigation on parent buffer
-  local opts = { buffer = fw.bufnr, noremap = true, silent = true }
-  vim.keymap.set('n', '<Tab>', function()
-    self:focus_next()
-  end, vim.tbl_extend('force', opts, { desc = "Next virtual field" }))
+  -- Only set these if there are tab-stoppable fields, to avoid overriding
+  -- multi-panel Tab keymaps when no fields need Tab navigation
+  if #self._field_order > 0 then
+    local opts = { buffer = fw.bufnr, noremap = true, silent = true }
+    vim.keymap.set('n', '<Tab>', function()
+      self:focus_next()
+    end, vim.tbl_extend('force', opts, { desc = "Next virtual field" }))
 
-  vim.keymap.set('n', '<S-Tab>', function()
-    self:focus_prev()
-  end, vim.tbl_extend('force', opts, { desc = "Previous virtual field" }))
+    vim.keymap.set('n', '<S-Tab>', function()
+      self:focus_prev()
+    end, vim.tbl_extend('force', opts, { desc = "Previous virtual field" }))
+  end
 end
 
 ---Find which virtual container (if any) covers the given position.
@@ -342,20 +349,35 @@ function VirtualContainerManager:_setup_active_exit_keymaps(vc)
   local fw = self._parent_float
 
   -- Tab / Shift-Tab for cycling between fields
-  vim.keymap.set('n', '<Tab>', function()
-    self:focus_next()
-  end, vim.tbl_extend('force', opts, { desc = "Next virtual field" }))
+  if #self._field_order > 0 then
+    vim.keymap.set('n', '<Tab>', function()
+      self:focus_next()
+    end, vim.tbl_extend('force', opts, { desc = "Next virtual field" }))
 
-  vim.keymap.set('n', '<S-Tab>', function()
-    self:focus_prev()
-  end, vim.tbl_extend('force', opts, { desc = "Previous virtual field" }))
+    vim.keymap.set('n', '<S-Tab>', function()
+      self:focus_prev()
+    end, vim.tbl_extend('force', opts, { desc = "Previous virtual field" }))
+  end
 
-  -- Close parent UI from active container
-  if fw.config.default_keymaps then
-    vim.keymap.set('n', 'q', function()
-      self:deactivate()
-      fw:close()
-    end, opts)
+  -- Always allow closing from active container (not gated by default_keymaps)
+  vim.keymap.set('n', 'q', function()
+    self:deactivate()
+    fw:close()
+  end, opts)
+
+  -- Propagate parent buffer keymaps (for multi-panel close, navigation, etc.)
+  local skip_keys = { '<tab>', '<s-tab>', 'j', 'k', 'h', 'l',
+                      '<up>', '<down>', '<left>', '<right>', '<esc>', 'q' }
+  local skip_set = {}
+  for _, k in ipairs(skip_keys) do skip_set[k] = true end
+
+  local parent_maps = vim.api.nvim_buf_get_keymap(fw.bufnr, 'n')
+  for _, map in ipairs(parent_maps) do
+    if not skip_set[(map.lhs or ""):lower()] then
+      vim.keymap.set('n', map.lhs, map.callback or map.rhs, {
+        buffer = bufnr, noremap = true, silent = true,
+      })
+    end
   end
 
   -- Up/Down keymaps: deactivate and return cursor to parent at appropriate position
@@ -464,20 +486,35 @@ function VirtualContainerManager:_setup_container_exit_keymaps(vc)
   local fw = self._parent_float
 
   -- Tab / Shift-Tab for cycling between fields
-  vim.keymap.set('n', '<Tab>', function()
-    self:focus_next()
-  end, vim.tbl_extend('force', opts, { desc = "Next virtual field" }))
+  if #self._field_order > 0 then
+    vim.keymap.set('n', '<Tab>', function()
+      self:focus_next()
+    end, vim.tbl_extend('force', opts, { desc = "Next virtual field" }))
 
-  vim.keymap.set('n', '<S-Tab>', function()
-    self:focus_prev()
-  end, vim.tbl_extend('force', opts, { desc = "Previous virtual field" }))
+    vim.keymap.set('n', '<S-Tab>', function()
+      self:focus_prev()
+    end, vim.tbl_extend('force', opts, { desc = "Previous virtual field" }))
+  end
 
-  -- Close parent UI
-  if fw.config.default_keymaps then
-    vim.keymap.set('n', 'q', function()
-      self:deactivate()
-      fw:close()
-    end, opts)
+  -- Always allow closing from active container (not gated by default_keymaps)
+  vim.keymap.set('n', 'q', function()
+    self:deactivate()
+    fw:close()
+  end, opts)
+
+  -- Propagate parent buffer keymaps (for multi-panel close, navigation, etc.)
+  local skip_keys = { '<tab>', '<s-tab>', 'j', 'k', 'h', 'l',
+                      '<up>', '<down>', '<left>', '<right>', '<esc>', 'q' }
+  local skip_set = {}
+  for _, k in ipairs(skip_keys) do skip_set[k] = true end
+
+  local parent_maps = vim.api.nvim_buf_get_keymap(fw.bufnr, 'n')
+  for _, map in ipairs(parent_maps) do
+    if not skip_set[(map.lhs or ""):lower()] then
+      vim.keymap.set('n', map.lhs, map.callback or map.rhs, {
+        buffer = bufnr, noremap = true, silent = true,
+      })
+    end
   end
 
   -- Helper: scroll parent to reveal clipped container rows.

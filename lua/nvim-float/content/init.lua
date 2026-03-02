@@ -522,6 +522,7 @@ function ContentBuilder:embedded_input(key, opts)
 
   self._containers[key] = {
     type = "embedded_input",
+    tab_stop = opts.tab_stop,
     row = container_row,
     col = container_col, -- nil = auto-center (only when no label)
     width = opts.width,
