@@ -498,7 +498,7 @@ end
 
 ---Reserve space for an embedded text input and record its definition
 ---@param key string Unique input key
----@param opts { width: number, col?: number, placeholder?: string, value?: string, label?: string, on_change?: fun(key: string, value: string), on_submit?: fun(key: string, value: string), zindex_offset?: number, winhighlight?: string, border?: string|table }
+---@param opts { width: number, col?: number, placeholder?: string, value?: string, label?: string, on_change?: fun(key: string, value: string), on_submit?: fun(key: string, value: string), on_deactivate?: fun(key: string, value: string), zindex_offset?: number, winhighlight?: string, border?: string|table }
 ---@return ContentBuilder self For chaining
 function ContentBuilder:embedded_input(key, opts)
   opts = opts or {}
@@ -530,6 +530,7 @@ function ContentBuilder:embedded_input(key, opts)
     value = opts.value,
     on_change = opts.on_change,
     on_submit = opts.on_submit,
+    on_deactivate = opts.on_deactivate,
     zindex_offset = opts.zindex_offset,
     winhighlight = opts.winhighlight,
     border = opts.border,

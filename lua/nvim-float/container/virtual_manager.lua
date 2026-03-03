@@ -164,15 +164,23 @@ function VirtualContainerManager:_deactivate_internal()
   if not self._active_name then return end
 
   local vc = self._virtuals[self._active_name]
+
+  -- Clear active name BEFORE callbacks to prevent reentrant cycles
+  -- (on_deactivate may trigger render_panel → close_all → _deactivate_internal)
+  self._active_name = nil
+
   if vc then
     -- For inputs, exit edit mode before dematerializing
     if vc.type == "embedded_input" and vc:get_real_field() then
       pcall(function() vc:get_real_field():exit_edit() end)
     end
     vc:dematerialize()
-  end
 
-  self._active_name = nil
+    -- Fire user-level deactivation callback (after dematerialize syncs value)
+    if vc._definition and vc._definition.on_deactivate then
+      vc._definition.on_deactivate(vc.name, vc._state.value)
+    end
+  end
 end
 
 -- ============================================================================
@@ -261,10 +269,15 @@ function VirtualContainerManager:setup_cursor_tracking()
 
         local target = self:find_virtual_at(row0, dcol)
         if target and target.name ~= self._active_name then
+          local prev = self._last_cursor_row
+          -- Skip on first CursorMoved after VCM creation (prevents auto-focus on render)
+          if prev == nil then
+            self._last_cursor_row = row0
+            return
+          end
           if target.type == "container" then
             -- Only auto-activate generic containers on single-row movement (j/k)
-            local prev = self._last_cursor_row
-            if prev == nil or math.abs(row0 - prev) > 1 then
+            if math.abs(row0 - prev) > 1 then
               self._last_cursor_row = row0
               return  -- Skip: cursor jumped (Ctrl-D, gg, G, etc.)
             end

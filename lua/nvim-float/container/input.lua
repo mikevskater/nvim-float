@@ -85,6 +85,9 @@ function EmbeddedInput.new(config)
     vim.keymap.set('i', '<CR>', function()
       self:exit_edit()
       vim.cmd("stopinsert")
+      if self._config.on_submit then
+        self._config.on_submit(self.key, self._value)
+      end
     end, { buffer = self._container.bufnr, noremap = true, silent = true, desc = "Confirm input" })
   end
 
