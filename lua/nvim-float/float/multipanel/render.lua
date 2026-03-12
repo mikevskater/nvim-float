@@ -51,8 +51,14 @@ function M.render_panel(state, panel_name, opts)
 
   -- Recreate embedded containers from stored ContentBuilder
   local cb = panel.float._content_builder
-  if cb and cb.get_containers and cb:get_containers() then
+  local has_containers = cb and cb.get_containers and cb:get_containers()
+  local has_old_vcm = panel.float._virtual_manager ~= nil
+
+  if has_containers or has_old_vcm then
     local fw = panel.float
+
+    -- Save and restore focused window to avoid stealing focus during render
+    local prev_win = vim.api.nvim_get_current_win()
 
     -- 1. Snapshot: capture VCM active state before teardown
     local scroll_snapshot = nil
@@ -95,71 +101,77 @@ function M.render_panel(state, panel_name, opts)
     end
     fw._navigation_regions = nil
 
-    -- 3. Recreate containers (skip_render so we can restore state first)
-    fw:_create_containers_from_builder(cb, true)
+    -- 3. Recreate containers only if new CB has containers
+    if has_containers then
+      fw:_create_containers_from_builder(cb, true)
 
-    -- 4. Restore scroll state
-    if scroll_snapshot and fw._virtual_manager then
-      fw._virtual_manager:restore_scroll_state(scroll_snapshot)
-    end
-
-    -- 5. Suppress virtual render for the container that will be re-activated
-    if was_active_name and fw._virtual_manager then
-      local pending_vc = fw._virtual_manager:get(was_active_name)
-      if pending_vc then
-        pending_vc._suppress_content = true
+      -- 4. Restore scroll state
+      if scroll_snapshot and fw._virtual_manager then
+        fw._virtual_manager:restore_scroll_state(scroll_snapshot)
       end
-    end
 
-    -- 6. Render all virtual containers
-    if fw._virtual_manager then
-      fw._virtual_manager:render_all_virtual(true)
-    end
+      -- 5. Suppress virtual render for the container that will be re-activated
+      if was_active_name and fw._virtual_manager then
+        local pending_vc = fw._virtual_manager:get(was_active_name)
+        if pending_vc then
+          pending_vc._suppress_content = true
+        end
+      end
 
-    -- 7. Re-setup scroll sync
-    require("nvim-float.container.scroll_sync").setup(fw)
+      -- 6. Render all virtual containers
+      if fw._virtual_manager then
+        fw._virtual_manager:render_all_virtual(true)
+      end
 
-    -- 8. Re-activate previously active container and restore cursor + mode
-    if was_active_name and fw._virtual_manager then
-      local vc = fw._virtual_manager:get(was_active_name)
-      if vc then
-        vc._suppress_content = false
-        fw._virtual_manager:activate(was_active_name)
+      -- 7. Re-setup scroll sync
+      require("nvim-float.container.scroll_sync").setup(fw)
 
-        if was_active_cursor then
-          local active = fw._virtual_manager:get_active()
-          local active_container = active and active:get_container()
-          if active_container and active_container:is_valid() then
-            local max_lines = vim.api.nvim_buf_line_count(active_container.bufnr)
-            local row = math.min(was_active_cursor[1], max_lines)
-            pcall(vim.api.nvim_win_set_cursor, active_container.winid,
-              { row, was_active_cursor[2] })
+      -- 8. Re-activate previously active container and restore cursor + mode
+      if was_active_name and fw._virtual_manager then
+        local vc = fw._virtual_manager:get(was_active_name)
+        if vc then
+          vc._suppress_content = false
+          fw._virtual_manager:activate(was_active_name)
+
+          if was_active_cursor then
+            local active = fw._virtual_manager:get_active()
+            local active_container = active and active:get_container()
+            if active_container and active_container:is_valid() then
+              local max_lines = vim.api.nvim_buf_line_count(active_container.bufnr)
+              local row = math.min(was_active_cursor[1], max_lines)
+              pcall(vim.api.nvim_win_set_cursor, active_container.winid,
+                { row, was_active_cursor[2] })
+            end
+          end
+
+          if was_active_mode == 'i' or was_active_mode == 'R' then
+            local active = fw._virtual_manager:get_active()
+            if active and active.type == "embedded_input" then
+              local real_field = active:get_real_field()
+              if real_field then
+                real_field:enter_edit()
+              end
+            end
           end
         end
+      end
 
-        if was_active_mode == 'i' or was_active_mode == 'R' then
-          local active = fw._virtual_manager:get_active()
-          if active and active.type == "embedded_input" then
-            local real_field = active:get_real_field()
-            if real_field then
-              real_field:enter_edit()
+      -- 9. Safety: clear _suppress_content on ALL containers
+      if fw._virtual_manager then
+        for _, vc in pairs(fw._virtual_manager._virtuals) do
+          if vc._suppress_content then
+            vc._suppress_content = false
+            if not vc._materialized then
+              vc:render_virtual()
             end
           end
         end
       end
     end
 
-    -- 9. Safety: clear _suppress_content on ALL containers (iterate _virtuals directly
-    --    since get_names() only returns tab_stop entries and may miss tab_stop=false ones)
-    if fw._virtual_manager then
-      for _, vc in pairs(fw._virtual_manager._virtuals) do
-        if vc._suppress_content then
-          vc._suppress_content = false
-          if not vc._materialized then
-            vc:render_virtual()
-          end
-        end
-      end
+    -- Restore focus to previously focused window
+    if prev_win and vim.api.nvim_win_is_valid(prev_win) then
+      pcall(vim.api.nvim_set_current_win, prev_win)
     end
   end
 

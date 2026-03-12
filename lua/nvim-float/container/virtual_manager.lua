@@ -379,8 +379,14 @@ function VirtualContainerManager:_setup_active_exit_keymaps(vc)
   end, opts)
 
   -- Propagate parent buffer keymaps (for multi-panel close, navigation, etc.)
-  local skip_keys = { '<tab>', '<s-tab>', 'j', 'k', 'h', 'l',
+  -- When no tab-stoppable fields exist, allow Tab/S-Tab to propagate from parent
+  -- (e.g. for multi-panel focus switching)
+  local skip_keys = { 'j', 'k', 'h', 'l',
                       '<up>', '<down>', '<left>', '<right>', '<esc>', 'q' }
+  if #self._field_order > 0 then
+    table.insert(skip_keys, '<tab>')
+    table.insert(skip_keys, '<s-tab>')
+  end
   local skip_set = {}
   for _, k in ipairs(skip_keys) do skip_set[k] = true end
 
@@ -516,8 +522,13 @@ function VirtualContainerManager:_setup_container_exit_keymaps(vc)
   end, opts)
 
   -- Propagate parent buffer keymaps (for multi-panel close, navigation, etc.)
-  local skip_keys = { '<tab>', '<s-tab>', 'j', 'k', 'h', 'l',
+  -- When no tab-stoppable fields exist, allow Tab/S-Tab to propagate from parent
+  local skip_keys = { 'j', 'k', 'h', 'l',
                       '<up>', '<down>', '<left>', '<right>', '<esc>', 'q' }
+  if #self._field_order > 0 then
+    table.insert(skip_keys, '<tab>')
+    table.insert(skip_keys, '<s-tab>')
+  end
   local skip_set = {}
   for _, k in ipairs(skip_keys) do skip_set[k] = true end
 

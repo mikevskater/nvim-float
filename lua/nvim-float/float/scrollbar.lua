@@ -49,10 +49,11 @@ function Scrollbar.setup(float)
   -- Calculate scrollbar position
   -- For editor-relative floats, the window row/col is where content starts
   -- Border is drawn around it visually but doesn't change the row/col values
-  -- We want scrollbar at the rightmost column of the visible content area
+  -- Position scrollbar on the right border column so it doesn't overlap content
+  -- This way wrapped text won't be hidden behind the scrollbar
   -- Add +1 to row to account for the top border
   local scrollbar_row = float._win_row + 1
-  local scrollbar_col = float._win_col + float._win_width - 1  -- Last column of content area
+  local scrollbar_col = float._win_col + float._win_width + 1  -- Right border column
 
   -- Create scrollbar window
   float._scrollbar_winid = vim.api.nvim_open_win(float._scrollbar_bufnr, false, {
@@ -254,7 +255,7 @@ function Scrollbar.reposition(float)
 
   -- Calculate new scrollbar position based on updated window geometry
   local scrollbar_row = float._win_row + 1
-  local scrollbar_col = float._win_col + float._win_width - 1
+  local scrollbar_col = float._win_col + float._win_width + 1  -- Right border column
 
   -- Update scrollbar window position and height
   vim.api.nvim_win_set_config(float._scrollbar_winid, {
