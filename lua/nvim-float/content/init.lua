@@ -34,7 +34,7 @@ local ContentBuilder = {}
 ContentBuilder.__index = ContentBuilder
 
 -- Import submodules (lazy-loaded for circular dependency safety)
-local _lines, _highlights, _fields, _results
+local _lines, _highlights, _fields, _results, _grid
 
 local function get_lines()
   if not _lines then _lines = require("nvim-float.content.lines") end
@@ -54,6 +54,11 @@ end
 local function get_results()
   if not _results then _results = require("nvim-float.content.results") end
   return _results
+end
+
+local function get_grid()
+  if not _grid then _grid = require("nvim-float.content.grid") end
+  return _grid
 end
 
 -- ============================================================================
@@ -432,6 +437,12 @@ function ContentBuilder:result_separator_with_rownum(columns, border_style, row_
 function ContentBuilder:result_bottom_border_with_rownum(columns, border_style, row_num_width) return get_results().result_bottom_border_with_rownum(self, columns, border_style, row_num_width) end
 function ContentBuilder:result_row_separator_with_rownum(columns, border_style, row_num_width) return get_results().result_row_separator_with_rownum(self, columns, border_style, row_num_width) end
 function ContentBuilder:add_cached_row_separator(separator_text) return get_results().add_cached_row_separator(self, separator_text) end
+
+-- ============================================================================
+-- Grid Methods (delegated to content.grid)
+-- ============================================================================
+
+function ContentBuilder:grid(cells, opts) return get_grid().grid(self, cells, opts) end
 
 -- ============================================================================
 -- Container Methods

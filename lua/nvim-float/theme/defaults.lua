@@ -63,6 +63,9 @@ M.highlights = {
   NvimFloatDim = { fg = "#4A4A4A" },
   NvimFloatComment = { fg = "#6A9955", italic = true },
 
+  -- Grid
+  NvimFloatGridSelected = { link = "Visual" },
+
   -- Code/syntax styles
   NvimFloatKeyword = { fg = "#569CD6", bold = true },
   NvimFloatString = { fg = "#CE9178" },
