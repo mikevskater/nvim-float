@@ -1,16 +1,30 @@
 ---@module 'nvim-float.float.multipanel.render'
 ---@brief Panel rendering methods for MultiPanelWindow
 
+local Diff = require("nvim-float.content.diff")
+
 local M = {}
 
 -- ============================================================================
 -- Panel Rendering Methods
 -- ============================================================================
 
+---Normalize a highlight entry to named format
+---@param hl table Highlight in array or named format
+---@return table normalized { line, col_start, col_end, hl_group }
+local function normalize_hl(hl)
+  return {
+    line = hl.line or hl[1],
+    col_start = hl.col_start or hl[2],
+    col_end = hl.col_end or hl[3],
+    hl_group = hl.hl_group or hl[4],
+  }
+end
+
 ---Render a specific panel
 ---@param state MultiPanelState
 ---@param panel_name string Panel to render
----@param opts? { cursor_row?: number, cursor_col?: number } Optional cursor position to set after rendering completes
+---@param opts? { cursor_row?: number, cursor_col?: number, force?: boolean } Optional cursor position and force flag
 function M.render_panel(state, panel_name, opts)
   if state._closed then return end
 
@@ -25,36 +39,66 @@ function M.render_panel(state, panel_name, opts)
   lines = lines or {}
   highlights = highlights or {}
 
-  -- Helper to apply all highlights
+  -- Normalize all highlights to named format
+  local norm_highlights = {}
+  for i, hl in ipairs(highlights) do
+    norm_highlights[i] = normalize_hl(hl)
+  end
+
+  -- Helper to apply all highlights (full render path)
   local function apply_all_highlights()
     vim.api.nvim_buf_clear_namespace(panel.float.bufnr, panel.namespace, 0, -1)
-    for _, hl in ipairs(highlights) do
-      -- Support both array format {line, col_start, col_end, hl_group}
-      -- and named format {line=, col_start=, col_end=, hl_group=} from ContentBuilder
-      local line = hl.line or hl[1]
-      local col_start = hl.col_start or hl[2]
-      local col_end = hl.col_end or hl[3]
-      local hl_group = hl.hl_group or hl[4]
-
-      if line and col_start and col_end and hl_group then
+    for _, hl in ipairs(norm_highlights) do
+      if hl.line and hl.col_start and hl.col_end and hl.hl_group then
         vim.api.nvim_buf_add_highlight(
           panel.float.bufnr, panel.namespace,
-          hl_group, line, col_start, col_end
+          hl.hl_group, hl.line, hl.col_start, hl.col_end
         )
       end
     end
   end
 
-  -- Always use synchronous single-pass rendering (simpler and more reliable)
-  panel.float:update_lines(lines)
-  apply_all_highlights()
+  -- Diff-based rendering: skip buffer updates when nothing changed
+  local force = opts and opts.force
+  local did_diff = false
+
+  if panel._render_cache and not force then
+    local diff = Diff.compute(panel._render_cache, lines, norm_highlights)
+
+    if not diff.text_changed and #diff.hl_dirty_lines == 0 then
+      -- Nothing changed — zero API calls
+      did_diff = true
+    elseif not diff.line_count_changed then
+      -- Same line count: apply surgical diff
+      local new_hl_by_line = Diff.index_highlights(norm_highlights)
+      Diff.apply_diff(panel.float.bufnr, panel.namespace, diff, lines, new_hl_by_line)
+      panel.float.lines = lines
+      if panel.float.config.scrollbar then
+        require("nvim-float.float.scrollbar").update(panel.float)
+      end
+      did_diff = true
+    end
+    -- Line count changed: fall through to full render
+
+    -- Update cache
+    panel._render_cache = Diff.create_cache(lines, norm_highlights)
+  end
+
+  if not did_diff then
+    -- Full render path
+    panel.float:update_lines(lines)
+    apply_all_highlights()
+    panel._render_cache = Diff.create_cache(lines, norm_highlights)
+  end
 
   -- Recreate embedded containers from stored ContentBuilder
+  -- Skip container rebuild when diff found no text changes (pure cursor move)
   local cb = panel.float._content_builder
   local has_containers = cb and cb.get_containers and cb:get_containers()
   local has_old_vcm = panel.float._virtual_manager ~= nil
+  local skip_container_rebuild = did_diff and not force
 
-  if has_containers or has_old_vcm then
+  if not skip_container_rebuild and (has_containers or has_old_vcm) then
     local fw = panel.float
 
     -- Save and restore focused window to avoid stealing focus during render
