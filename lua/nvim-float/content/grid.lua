@@ -16,20 +16,20 @@ local function truncate_to_width(text, target_width)
   local dw = vim.fn.strdisplaywidth(text)
   if dw <= target_width then return text end
 
-  -- Walk character by character, accumulating display width
-  local result = {}
+  -- Walk character by character using vim.fn.strcharpart
+  local nchars = vim.fn.strchars(text)
   local accum = 0
-  for _, code in utf8.codes(text) do
-    local ch = utf8.char(code)
+  local keep = 0
+  for i = 0, nchars - 1 do
+    local ch = vim.fn.strcharpart(text, i, 1)
     local ch_w = vim.fn.strdisplaywidth(ch)
     if accum + ch_w > target_width - 1 then
       break
     end
-    result[#result + 1] = ch
     accum = accum + ch_w
+    keep = i + 1
   end
-  local truncated = table.concat(result) .. "…"
-  -- Pad if ellipsis doesn't fill exactly
+  local truncated = vim.fn.strcharpart(text, 0, keep) .. "…"
   local final_w = vim.fn.strdisplaywidth(truncated)
   if final_w < target_width then
     truncated = truncated .. string.rep(" ", target_width - final_w)
@@ -62,48 +62,6 @@ local function calc_columns(opts)
   return math.max(1, math.floor(available / cell_total))
 end
 
----Calculate byte offset for column position in a line string
----Uses the fact that cells are padded to fixed display widths
----@param line_text string The full line text
----@param col_idx number 1-indexed column position
----@param col_width number Display width per cell
----@param cell_padding number Padding between cells
----@return number byte_start, number byte_end
-local function calc_cell_byte_range(line_text, col_idx, col_width, cell_padding)
-  -- Walk through the line text to find byte positions
-  -- Each cell occupies col_width display columns + cell_padding spaces
-  local cell_total = col_width + cell_padding
-  local target_display_start = (col_idx - 1) * cell_total
-
-  local byte_pos = 1
-  local display_pos = 0
-
-  -- Walk to start position
-  while display_pos < target_display_start and byte_pos <= #line_text do
-    local code = utf8.codepoint(line_text, byte_pos)
-    local ch = utf8.char(code)
-    local ch_w = vim.fn.strdisplaywidth(ch)
-    display_pos = display_pos + ch_w
-    byte_pos = byte_pos + #ch
-  end
-
-  local byte_start = byte_pos - 1 -- 0-indexed
-
-  -- Walk col_width display columns for the cell content
-  local cell_display = 0
-  while cell_display < col_width and byte_pos <= #line_text do
-    local code = utf8.codepoint(line_text, byte_pos)
-    local ch = utf8.char(code)
-    local ch_w = vim.fn.strdisplaywidth(ch)
-    cell_display = cell_display + ch_w
-    byte_pos = byte_pos + #ch
-  end
-
-  local byte_end = byte_pos - 1 -- 0-indexed, exclusive-ish (last byte of cell content)
-
-  return byte_start, byte_end
-end
-
 -- ============================================================================
 -- Grid Method
 -- ============================================================================
@@ -121,23 +79,28 @@ function M.grid(cb, cells, opts)
   local num_cols = calc_columns(opts)
   local sel = opts.selected
   local sel_hl = opts.selection_hl or "NvimFloatGridSelected"
-  local base_line = #cb._lines -- 0-indexed start line for the grid
+  local track = opts.track_elements
+  local elem_prefix = opts.element_prefix or "grid"
 
   -- Chunk cells into rows and build lines
   local row_idx = 0
+  local flat_idx = 0
   for i = 1, #cells, num_cols do
     row_idx = row_idx + 1
     local parts = {}
     local line_highlights = {}
+    local tracked_cells = track and {} or nil
 
     for c = 0, num_cols - 1 do
       local cell = cells[i + c]
       if not cell then break end
 
+      flat_idx = flat_idx + 1
+
       -- Pad cell text to column_width
       local padded = pad_cell(cell.text, col_width)
 
-      -- Add padding between cells (except after last)
+      -- Add padding between cells (not before first)
       if c > 0 then
         parts[#parts + 1] = string.rep(" ", cell_padding)
       end
@@ -165,6 +128,16 @@ function M.grid(cb, cells, opts)
           hl_group = sel_hl,
         }
       end
+
+      -- Collect cell info for element registration
+      if track and cell.data then
+        tracked_cells[#tracked_cells + 1] = {
+          name = elem_prefix .. "_" .. flat_idx,
+          byte_offset = byte_offset,
+          padded_len = #padded,
+          data = cell.data,
+        }
+      end
     end
 
     local line_text = table.concat(parts)
@@ -172,6 +145,22 @@ function M.grid(cb, cells, opts)
       text = line_text,
       highlights = line_highlights,
     })
+
+    -- Register tracked elements now that we know the line's row index
+    if tracked_cells then
+      local row_0 = #cb._lines - 1 -- 0-indexed row of line just added
+      for _, tc in ipairs(tracked_cells) do
+        cb._registry:register({
+          name = tc.name,
+          type = "grid_cell",
+          row = row_0,
+          col_start = tc.byte_offset,
+          col_end = tc.byte_offset + tc.padded_len,
+          row_based = false,
+          data = tc.data,
+        })
+      end
+    end
   end
 
   return cb
