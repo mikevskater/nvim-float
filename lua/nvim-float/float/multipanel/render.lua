@@ -1,7 +1,7 @@
 ---@module 'nvim-float.float.multipanel.render'
 ---@brief Panel rendering methods for MultiPanelWindow
 
-local Diff = require("nvim-float.content.diff")
+local Highlights = require("nvim-float.content.highlights")
 
 local M = {}
 
@@ -45,50 +45,22 @@ function M.render_panel(state, panel_name, opts)
     norm_highlights[i] = normalize_hl(hl)
   end
 
-  -- Helper to apply all highlights (full render path)
-  local function apply_all_highlights()
-    vim.api.nvim_buf_clear_namespace(panel.float.bufnr, panel.namespace, 0, -1)
-    for _, hl in ipairs(norm_highlights) do
-      if hl.line and hl.col_start and hl.col_end and hl.hl_group then
-        vim.api.nvim_buf_add_highlight(
-          panel.float.bufnr, panel.namespace,
-          hl.hl_group, hl.line, hl.col_start, hl.col_end
-        )
-      end
-    end
-  end
-
-  -- Diff-based rendering: skip buffer updates when nothing changed
+  -- Diff-based rendering via centralized cache
   local force = opts and opts.force
-  local did_diff = false
-
-  if panel._render_cache and not force then
-    local diff = Diff.compute(panel._render_cache, lines, norm_highlights)
-
-    if not diff.text_changed and #diff.hl_dirty_lines == 0 then
-      -- Nothing changed — zero API calls
-      did_diff = true
-    elseif not diff.line_count_changed then
-      -- Same line count: apply surgical diff
-      local new_hl_by_line = Diff.index_highlights(norm_highlights)
-      Diff.apply_diff(panel.float.bufnr, panel.namespace, diff, lines, new_hl_by_line)
-      panel.float.lines = lines
-      if panel.float.config.scrollbar then
-        require("nvim-float.float.scrollbar").update(panel.float)
-      end
-      did_diff = true
-    end
-    -- Line count changed: fall through to full render
-
-    -- Update cache
-    panel._render_cache = Diff.create_cache(lines, norm_highlights)
+  if force then
+    Highlights.clear_render_cache(panel.float.bufnr)
   end
 
-  if not did_diff then
-    -- Full render path
-    panel.float:update_lines(lines)
-    apply_all_highlights()
-    panel._render_cache = Diff.create_cache(lines, norm_highlights)
+  local rendered_lines, _, diff_result = Highlights.render_diff(
+    panel.float.bufnr, panel.namespace, lines, norm_highlights)
+
+  panel.float.lines = rendered_lines
+
+  -- Update scrollbar when text changed or first render
+  if not diff_result or diff_result.text_changed then
+    if panel.float.config.scrollbar then
+      require("nvim-float.float.scrollbar").update(panel.float)
+    end
   end
 
   -- Recreate embedded containers from stored ContentBuilder
@@ -96,7 +68,9 @@ function M.render_panel(state, panel_name, opts)
   local cb = panel.float._content_builder
   local has_containers = cb and cb.get_containers and cb:get_containers()
   local has_old_vcm = panel.float._virtual_manager ~= nil
-  local skip_container_rebuild = did_diff and not force
+  local skip_container_rebuild = diff_result ~= nil
+    and not force
+    and not diff_result.line_count_changed
 
   if not skip_container_rebuild and (has_containers or has_old_vcm) then
     local fw = panel.float

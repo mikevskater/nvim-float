@@ -142,17 +142,18 @@ end
 ---@param new_lines string[] Full new lines array
 ---@param new_hl_by_line table<number, table[]> New highlights indexed by line
 function M.apply_diff(bufnr, ns_id, diff, new_lines, new_hl_by_line)
-  -- Apply text changes by range
+  -- Apply text changes by range (bottom-to-top so insertions/deletions don't shift earlier ranges)
   if diff.text_changed then
-    vim.api.nvim_buf_set_option(bufnr, 'modifiable', true)
-    for _, range in ipairs(diff.changed_ranges) do
+    vim.api.nvim_set_option_value('modifiable', true, { buf = bufnr })
+    for i = #diff.changed_ranges, 1, -1 do
+      local range = diff.changed_ranges[i]
       local range_lines = {}
-      for i = range.start + 1, math.min(range.end_, #new_lines) do
-        range_lines[#range_lines + 1] = new_lines[i]
+      for j = range.start + 1, math.min(range.end_, #new_lines) do
+        range_lines[#range_lines + 1] = new_lines[j]
       end
       vim.api.nvim_buf_set_lines(bufnr, range.start, range.end_, false, range_lines)
     end
-    vim.api.nvim_buf_set_option(bufnr, 'modifiable', false)
+    vim.api.nvim_set_option_value('modifiable', false, { buf = bufnr })
   end
 
   -- Apply highlight changes per dirty line

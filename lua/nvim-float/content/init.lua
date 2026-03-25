@@ -381,8 +381,9 @@ function ContentBuilder:apply_to_buffer(bufnr, ns_id) return get_highlights().ap
 function ContentBuilder:render_to_buffer(bufnr, ns_id) return get_highlights().render_to_buffer(self, bufnr, ns_id) end
 function ContentBuilder:render_to_buffer_chunked(bufnr, ns_id, opts) return get_highlights().render_to_buffer_chunked(self, bufnr, ns_id, opts) end
 
--- Static chunked render methods
+-- Static render cache and chunked render methods
 ContentBuilder._chunked_state = {}
+function ContentBuilder.clear_render_cache(bufnr) return get_highlights().clear_render_cache(bufnr) end
 function ContentBuilder.cancel_chunked_render(bufnr) return get_highlights().cancel_chunked_render(bufnr) end
 function ContentBuilder.is_chunked_render_active(bufnr) return get_highlights().is_chunked_render_active(bufnr) end
 

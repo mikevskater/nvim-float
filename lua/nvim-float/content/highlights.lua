@@ -2,11 +2,25 @@
 ---@brief Highlight building and buffer rendering for ContentBuilder
 
 local Styles = require("nvim-float.theme.styles")
+local Diff = require("nvim-float.content.diff")
 
 local M = {}
 
+-- Per-buffer render caches for diff-based rendering
+---@type table<number, RenderCache>
+local _render_caches = {}
+
 -- Shared chunked state (referenced from ContentBuilder)
 local _chunked_state = {}
+
+---Remove cache entries for buffers that no longer exist
+local function prune_invalid_caches()
+  for bufnr in pairs(_render_caches) do
+    if not vim.api.nvim_buf_is_valid(bufnr) then
+      _render_caches[bufnr] = nil
+    end
+  end
+end
 
 -- ============================================================================
 -- Build Methods
@@ -93,24 +107,75 @@ function M.apply_to_buffer(cb, bufnr, ns_id)
   return ns_id
 end
 
----Build everything and apply to a buffer in one call
+---Clear the render cache for a buffer (forces full render on next call)
+---@param bufnr number Buffer number
+function M.clear_render_cache(bufnr)
+  _render_caches[bufnr] = nil
+end
+
+---Diff-based render with raw lines and highlights
+---@param bufnr number Buffer number
+---@param ns_id number? Namespace ID
+---@param lines string[] Text lines to render
+---@param highlights table[] Highlight entries { line, col_start, col_end, hl_group }
+---@return string[] lines The lines that were set
+---@return number ns_id The namespace ID used
+---@return DiffResult? diff_result Nil on first render, DiffResult on subsequent
+function M.render_diff(bufnr, ns_id, lines, highlights)
+  ns_id = ns_id or vim.api.nvim_create_namespace("nvim_float_content_builder")
+  prune_invalid_caches()
+
+  local cache = _render_caches[bufnr]
+  local diff_result = nil
+
+  if cache then
+    local diff = Diff.compute(cache, lines, highlights)
+    diff_result = diff
+
+    if not diff.text_changed and #diff.hl_dirty_lines == 0 then
+      -- Nothing changed — zero API calls
+      _render_caches[bufnr] = Diff.create_cache(lines, highlights)
+      return lines, ns_id, diff_result
+    end
+
+    -- Apply surgical diff (handles line-count changes via reverse iteration)
+    local new_hl_by_line = Diff.index_highlights(highlights)
+    Diff.apply_diff(bufnr, ns_id, diff, lines, new_hl_by_line)
+  else
+    -- No cache: full render
+    vim.api.nvim_set_option_value('modifiable', true, { buf = bufnr })
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+    vim.api.nvim_set_option_value('modifiable', false, { buf = bufnr })
+
+    -- Full highlight application
+    vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
+    for _, hl in ipairs(highlights) do
+      local col_end = hl.col_end
+      if not col_end or col_end <= 0 then
+        local line_text = lines[hl.line + 1]
+        if line_text then col_end = #line_text end
+      end
+      if col_end and col_end > hl.col_start then
+        pcall(vim.api.nvim_buf_add_highlight, bufnr, ns_id, hl.hl_group, hl.line, hl.col_start, col_end)
+      end
+    end
+  end
+
+  _render_caches[bufnr] = Diff.create_cache(lines, highlights)
+  return lines, ns_id, diff_result
+end
+
+---Build everything and apply to a buffer in one call (diff-aware)
 ---@param cb ContentBuilder
 ---@param bufnr number Buffer number
 ---@param ns_id number? Namespace ID
 ---@return string[] lines The lines that were set
 ---@return number ns_id The namespace ID used
+---@return DiffResult? diff_result Nil on first render, DiffResult on subsequent
 function M.render_to_buffer(cb, bufnr, ns_id)
   local lines = M.build_lines(cb)
-
-  -- Set buffer content
-  vim.api.nvim_set_option_value('modifiable', true, { buf = bufnr })
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-  vim.api.nvim_set_option_value('modifiable', false, { buf = bufnr })
-
-  -- Apply highlights
-  ns_id = M.apply_to_buffer(cb, bufnr, ns_id)
-
-  return lines, ns_id
+  local highlights = M.build_highlights(cb)
+  return M.render_diff(bufnr, ns_id, lines, highlights)
 end
 
 -- ============================================================================
