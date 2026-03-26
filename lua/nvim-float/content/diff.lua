@@ -85,8 +85,11 @@ function M.compute(cache, new_lines, new_highlights)
   local hl_dirty_lines = {}
 
   -- Linear scan for text changes, merge adjacent dirty lines into ranges
+  -- Also track individual text-changed lines (0-indexed) since nvim_buf_set_lines
+  -- destroys extmarks on replaced lines, requiring highlight reapplication
   local max_lines = math.max(#old_lines, #new_lines)
   local range_start = nil
+  local text_changed_lines = {}
 
   for i = 1, max_lines do
     local old = old_lines[i]
@@ -95,6 +98,7 @@ function M.compute(cache, new_lines, new_highlights)
 
     if different then
       text_changed = true
+      text_changed_lines[i - 1] = true -- 0-indexed
       if not range_start then
         range_start = i - 1 -- Convert to 0-indexed
       end
@@ -117,15 +121,27 @@ function M.compute(cache, new_lines, new_highlights)
     }
   end
 
-  -- Per-line highlight comparison
+  -- Per-line highlight comparison, also include lines where text changed
+  -- (nvim_buf_set_lines destroys extmarks on replaced lines even if highlights are identical)
+  local hl_dirty_set = {}
   local check_lines = math.max(#new_lines, #old_lines)
   for i = 0, check_lines - 1 do
-    local old_key = hl_line_key(old_hl_by_line[i])
-    local new_key = hl_line_key(new_hl_by_line[i])
-    if old_key ~= new_key then
-      hl_dirty_lines[#hl_dirty_lines + 1] = i
+    if text_changed_lines[i] then
+      hl_dirty_set[i] = true
+    else
+      local old_key = hl_line_key(old_hl_by_line[i])
+      local new_key = hl_line_key(new_hl_by_line[i])
+      if old_key ~= new_key then
+        hl_dirty_set[i] = true
+      end
     end
   end
+
+  -- Convert set to sorted array
+  for line in pairs(hl_dirty_set) do
+    hl_dirty_lines[#hl_dirty_lines + 1] = line
+  end
+  table.sort(hl_dirty_lines)
 
   return {
     text_changed = text_changed,
