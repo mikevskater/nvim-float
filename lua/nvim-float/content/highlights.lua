@@ -76,6 +76,10 @@ end
 ---@param ns_id number? Namespace ID (creates one if nil)
 ---@return number ns_id The namespace ID used
 function M.apply_to_buffer(cb, bufnr, ns_id)
+  if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+    return ns_id or -1
+  end
+
   ns_id = ns_id or vim.api.nvim_create_namespace("nvim_float_content_builder")
 
   -- Clear existing highlights in namespace
@@ -122,6 +126,11 @@ end
 ---@return number ns_id The namespace ID used
 ---@return DiffResult? diff_result Nil on first render, DiffResult on subsequent
 function M.render_diff(bufnr, ns_id, lines, highlights)
+  if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+    ns_id = ns_id or -1
+    return lines, ns_id, nil
+  end
+
   ns_id = ns_id or vim.api.nvim_create_namespace("nvim_float_content_builder")
   prune_invalid_caches()
 
@@ -188,6 +197,10 @@ end
 ---@param ns_id number? Namespace ID
 ---@param opts table? Options: { chunk_size?, on_progress?, on_complete? }
 function M.render_to_buffer_chunked(cb, bufnr, ns_id, opts)
+  if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+
   local lines = M.build_lines(cb)
   local highlights = M.build_highlights(cb)
 
